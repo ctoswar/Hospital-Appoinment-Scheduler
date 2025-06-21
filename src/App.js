@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Calendar, Clock, User, Stethoscope, Home, Plus, Edit, Trash2 } from 'lucide-react';
-import './styles.css';
+import './css/styles.css';
 
 const AppointmentScheduler = () => {
   const [currentPage, setCurrentPage] = useState('home');
