@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { Stethoscope, Calendar, Clock, Shield, Users, Star, ArrowRight, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { Stethoscope, Calendar, Clock, Shield, Users, Star, ArrowRight, Mail, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import Button from './Components/button';
-import './css/Homepage.css';
+import './styles/Homepage.css';
 
-const Homepage = ({ onLogin }) => {
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+
+const Homepage = ({ onLogin = () => {} }) => {
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('signin'); // 'signin' or 'register'
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -19,32 +23,108 @@ const Homepage = ({ onLogin }) => {
       ...formData,
       [e.target.name]: e.target.value
     });
+    // Clear error when user starts typing
+    if (error) setError('');
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const validateForm = () => {
+    if (!formData.email || !formData.password) {
+      setError('Please fill in all required fields');
+      return false;
+    }
+
     if (authMode === 'register') {
+      if (!formData.name) {
+        setError('Please enter your full name');
+        return false;
+      }
+      if (formData.password.length < 6) {
+        setError('Password must be at least 6 characters long');
+        return false;
+      }
       if (formData.password !== formData.confirmPassword) {
-        alert('Passwords do not match!');
-        return;
+        setError('Passwords do not match');
+        return false;
       }
-      // Simulate registration
-      alert('Registration successful! Please sign in.');
-      setAuthMode('signin');
-      setFormData({ email: '', password: '', name: '', confirmPassword: '' });
-    } else {
-      // Simulate login
-      if (formData.email && formData.password) {
-        onLogin();
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Please enter a valid email address');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const endpoint = authMode === 'register' ? '/register' : '/login';
+      const payload = authMode === 'register' 
+        ? {
+            name: formData.name,
+            email: formData.email,
+            password: formData.password,
+            role: 'patient' // Default role
+          }
+        : {
+            email: formData.email,
+            password: formData.password
+          };
+
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Something went wrong');
+      }
+
+      // Store token in localStorage
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+
+      // Success message
+      if (authMode === 'register') {
+        alert('Registration successful! Welcome to MedSchedule.');
       } else {
-        alert('Please fill in all fields');
+        alert('Login successful! Welcome back.');
       }
+
+      // Call the onLogin callback to update parent component
+      onLogin(data.user, data.token);
+
+      // Reset form
+      setFormData({ email: '', password: '', name: '', confirmPassword: '' });
+      setShowAuth(false);
+
+    } catch (error) {
+      console.error('Auth error:', error);
+      setError(error.message || 'An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const toggleAuthMode = () => {
     setAuthMode(authMode === 'signin' ? 'register' : 'signin');
     setFormData({ email: '', password: '', name: '', confirmPassword: '' });
+    setError('');
   };
 
   const features = [
@@ -103,7 +183,11 @@ const Homepage = ({ onLogin }) => {
             <Button
               variant="ghost"
               size="small"
-              onClick={() => setShowAuth(false)}
+              onClick={() => {
+                setShowAuth(false);
+                setError('');
+                setFormData({ email: '', password: '', name: '', confirmPassword: '' });
+              }}
             >
               ← Back to Home
             </Button>
@@ -120,6 +204,13 @@ const Homepage = ({ onLogin }) => {
               </p>
             </div>
 
+            {error && (
+              <div className="error-message">
+                <AlertCircle size={18} />
+                <span>{error}</span>
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="auth-form">
               {authMode === 'register' && (
                 <div className="form-group">
@@ -135,6 +226,7 @@ const Homepage = ({ onLogin }) => {
                     className="auth-input"
                     placeholder="Enter your full name"
                     required
+                    disabled={loading}
                   />
                 </div>
               )}
@@ -152,6 +244,7 @@ const Homepage = ({ onLogin }) => {
                   className="auth-input"
                   placeholder="Enter your email"
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -169,15 +262,21 @@ const Homepage = ({ onLogin }) => {
                     className="auth-input"
                     placeholder="Enter your password"
                     required
+                    disabled={loading}
+                    minLength={authMode === 'register' ? 6 : undefined}
                   />
                   <button
                     type="button"
                     className="password-toggle"
                     onClick={() => setShowPassword(!showPassword)}
+                    disabled={loading}
                   >
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
+                {authMode === 'register' && (
+                  <small className="form-hint">Password must be at least 6 characters long</small>
+                )}
               </div>
 
               {authMode === 'register' && (
@@ -194,6 +293,7 @@ const Homepage = ({ onLogin }) => {
                     className="auth-input"
                     placeholder="Confirm your password"
                     required
+                    disabled={loading}
                   />
                 </div>
               )}
@@ -204,9 +304,19 @@ const Homepage = ({ onLogin }) => {
                 size="large"
                 fullWidth
                 className="auth-submit-btn"
+                disabled={loading}
               >
-                {authMode === 'signin' ? 'Sign In' : 'Create Account'}
-                <ArrowRight size={18} />
+                {loading ? (
+                  <>
+                    <div className="spinner"></div>
+                    {authMode === 'signin' ? 'Signing In...' : 'Creating Account...'}
+                  </>
+                ) : (
+                  <>
+                    {authMode === 'signin' ? 'Sign In' : 'Create Account'}
+                    <ArrowRight size={18} />
+                  </>
+                )}
               </Button>
             </form>
 
@@ -217,6 +327,7 @@ const Homepage = ({ onLogin }) => {
                   type="button"
                   className="auth-toggle-btn"
                   onClick={toggleAuthMode}
+                  disabled={loading}
                 >
                   {authMode === 'signin' ? 'Sign Up' : 'Sign In'}
                 </button>
@@ -245,6 +356,7 @@ const Homepage = ({ onLogin }) => {
                 onClick={() => {
                   setAuthMode('signin');
                   setShowAuth(true);
+                  setError('');
                 }}
               >
                 Sign In
@@ -255,6 +367,7 @@ const Homepage = ({ onLogin }) => {
                 onClick={() => {
                   setAuthMode('register');
                   setShowAuth(true);
+                  setError('');
                 }}
               >
                 Get Started
@@ -283,6 +396,7 @@ const Homepage = ({ onLogin }) => {
                   onClick={() => {
                     setAuthMode('register');
                     setShowAuth(true);
+                    setError('');
                   }}
                   icon={ArrowRight}
                   iconPosition="right"
@@ -385,6 +499,7 @@ const Homepage = ({ onLogin }) => {
               onClick={() => {
                 setAuthMode('register');
                 setShowAuth(true);
+                setError('');
               }}
               icon={ArrowRight}
               iconPosition="right"
