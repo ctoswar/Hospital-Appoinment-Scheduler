@@ -7,7 +7,14 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || '';
+
+// Validate JWT_SECRET exists
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('ERROR: JWT_SECRET environment variable is required');
+  console.error('Please set JWT_SECRET in your .env file or environment variables');
+  process.exit(1);
+}
 
 // Middleware
 app.use(cors());
