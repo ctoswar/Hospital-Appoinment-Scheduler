@@ -3,6 +3,8 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
@@ -12,32 +14,59 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   console.error('ERROR: JWT_SECRET environment variable is required');
-  console.error('Please set JWT_SECRET in your .env file or environment variables');
   process.exit(1);
 }
 
-// Middleware
-app.use(cors());
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: 'http://localhost:3000',
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+// Security middleware
+app.use(helmet());
+app.use(cors(corsOptions));
 app.use(express.json());
 
-// MySQL connection configuration
-const dbConfig = {
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+app.use(limiter);
+
+// Handle preflight requests
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
+
+// MySQL connection pool with enhanced configuration
+const pool = mysql.createPool({
   host: process.env.DB_HOST || '192.168.75.101',
   user: process.env.DB_USER || 'ctos',
   password: process.env.DB_PASSWORD || 'gameclub11',
   database: process.env.DB_NAME || 'medschedule',
-  port: process.env.DB_PORT || 3306
-};
+  port: process.env.DB_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
-// Create MySQL connection pool
-const pool = mysql.createPool(dbConfig);
+pool.on('error', (err) => {
+  console.error('MySQL pool error:', err);
+});
 
-// Initialize database tables
+// Database initialization
 async function initializeDatabase() {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     
-    // Create users table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -50,7 +79,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Create appointments table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS appointments (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -68,7 +96,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Create doctors table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -81,7 +108,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Insert sample doctors if table is empty
     const [doctors] = await connection.execute('SELECT COUNT(*) as count FROM doctors');
     if (doctors[0].count === 0) {
       const sampleDoctors = [
@@ -90,7 +116,6 @@ async function initializeDatabase() {
         ['Dr. Brown', 'Dermatology', false],
         ['Dr. Davis', 'Orthopedics', true]
       ];
-
       for (const doctor of sampleDoctors) {
         await connection.execute(
           'INSERT INTO doctors (name, specialty, available) VALUES (?, ?, ?)',
@@ -99,50 +124,52 @@ async function initializeDatabase() {
       }
     }
 
-    connection.release();
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Database initialization error:', error);
+  } finally {
+    if (connection) connection.release();
   }
 }
 
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
+// Modern JWT authentication middleware
+const authenticateToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader?.split(' ')[1];
+    
+    if (!token) throw new Error('Access token required');
+    
+    const user = await new Promise((resolve, reject) => {
+      jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) reject(new Error('Invalid or expired token'));
+        resolve(user);
+      });
+    });
+    
     req.user = user;
     next();
-  });
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
 };
 
-// Routes
+// API Routes with improved error handling
 
-// Register new user
-app.post('/api/register', async (req, res) => {
+// User registration
+app.post('/api/register', async (req, res, next) => {
   try {
     const { name, email, password, role = 'patient' } = req.body;
 
-    // Validate input
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
     const connection = await pool.getConnection();
-
-    // Check if user already exists
     const [existingUsers] = await connection.execute(
       'SELECT id FROM users WHERE email = ?',
       [email]
@@ -150,89 +177,60 @@ app.post('/api/register', async (req, res) => {
 
     if (existingUsers.length > 0) {
       connection.release();
-      return res.status(409).json({ error: 'User with this email already exists' });
+      return res.status(409).json({ error: 'Email already exists' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Insert new user
     const [result] = await connection.execute(
       'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
       [name, email, hashedPassword, role]
     );
-
     connection.release();
 
-    // Generate JWT token
     const token = jwt.sign(
-      { 
-        userId: result.insertId, 
-        email: email, 
-        name: name, 
-        role: role 
-      },
+      { userId: result.insertId, email, name, role },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
     res.status(201).json({
-      message: 'User registered successfully',
+      message: 'Registration successful',
       token,
-      user: {
-        id: result.insertId,
-        name,
-        email,
-        role
-      }
+      user: { id: result.insertId, name, email, role }
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
-// Login user
-app.post('/api/login', async (req, res) => {
+// User login
+app.post('/api/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Validate input
     if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+      return res.status(400).json({ error: 'Email and password required' });
     }
 
     const connection = await pool.getConnection();
-
-    // Find user by email
     const [users] = await connection.execute(
       'SELECT id, name, email, password, role FROM users WHERE email = ?',
       [email]
     );
-
     connection.release();
 
     if (users.length === 0) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = users[0];
-
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate JWT token
     const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email, 
-        name: user.name, 
-        role: user.role 
-      },
+      { userId: user.id, email: user.email, name: user.name, role: user.role },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -240,81 +238,98 @@ app.post('/api/login', async (req, res) => {
     res.json({
       message: 'Login successful',
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
+      user: { id: user.id, name: user.name, email: user.email, role: user.role }
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
 // Get user profile
-app.get('/api/profile', authenticateToken, async (req, res) => {
+app.get('/api/user/profile', authenticateToken, async (req, res, next) => {
   try {
     const connection = await pool.getConnection();
-    
     const [users] = await connection.execute(
-      'SELECT id, name, email, role, created_at FROM users WHERE id = ?',
+      'SELECT id, name, email, role FROM users WHERE id = ?',
       [req.user.userId]
     );
-
     connection.release();
 
     if (users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user: users[0] });
+    res.json(users[0]);
   } catch (error) {
-    console.error('Profile fetch error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
+  }
+});
+
+// Delete user account
+app.delete('/api/user/delete/:id', authenticateToken, async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    
+    // Check if user has permission (admin or deleting own account)
+    if (req.user.role !== 'admin' && req.user.userId !== parseInt(userId)) {
+      return res.status(403).json({ error: 'Unauthorized to delete this account' });
+    }
+
+    const connection = await pool.getConnection();
+    
+    // Check if user exists
+    const [users] = await connection.execute(
+      'SELECT id, name FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Delete user (appointments will be cascade deleted due to foreign key)
+    await connection.execute('DELETE FROM users WHERE id = ?', [userId]);
+    connection.release();
+
+    res.json({ 
+      message: 'User account deleted successfully',
+      deletedUser: users[0]
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
 // Get all doctors
-app.get('/api/doctors', async (req, res) => {
+app.get('/api/doctors', async (req, res, next) => {
   try {
     const connection = await pool.getConnection();
-    
     const [doctors] = await connection.execute(
-      'SELECT id, name, specialty, available FROM doctors ORDER BY name'
+      'SELECT id, name, specialty, available FROM doctors WHERE available = true'
     );
-
     connection.release();
-    res.json({ doctors });
+    res.json(doctors);
   } catch (error) {
-    console.error('Doctors fetch error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
 // Create appointment
-app.post('/api/appointments', authenticateToken, async (req, res) => {
+app.post('/api/appointments', authenticateToken, async (req, res, next) => {
   try {
-    const { doctorName, appointmentDate, appointmentTime, appointmentType } = req.body;
-    const patientId = req.user.userId;
-    const patientName = req.user.name;
-
-    // Validate input
-    if (!doctorName || !appointmentDate || !appointmentTime || !appointmentType) {
+    const { doctor_id, doctor_name, appointment_date, appointment_time, appointment_type } = req.body;
+    
+    if (!doctor_id || !doctor_name || !appointment_date || !appointment_time || !appointment_type) {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
     const connection = await pool.getConnection();
-
-    // Insert appointment
     const [result] = await connection.execute(
-      `INSERT INTO appointments 
-       (patient_id, patient_name, doctor_name, appointment_date, appointment_time, appointment_type) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [patientId, patientName, doctorName, appointmentDate, appointmentTime, appointmentType]
+      `INSERT INTO appointments (patient_id, doctor_id, patient_name, doctor_name, 
+       appointment_date, appointment_time, appointment_type) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.userId, doctor_id, req.user.name, doctor_name, appointment_date, appointment_time, appointment_type]
     );
-
     connection.release();
 
     res.status(201).json({
@@ -322,58 +337,42 @@ app.post('/api/appointments', authenticateToken, async (req, res) => {
       appointmentId: result.insertId
     });
   } catch (error) {
-    console.error('Appointment creation error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
-// Get appointments for a user
-app.get('/api/appointments', authenticateToken, async (req, res) => {
+// Get user appointments
+app.get('/api/appointments', authenticateToken, async (req, res, next) => {
   try {
     const connection = await pool.getConnection();
-    
-    let query = `
-      SELECT id, patient_name, doctor_name, appointment_date, appointment_time, 
-             appointment_type, status, created_at 
-      FROM appointments 
-    `;
-    let params = [];
-
-    // If user is a patient, only show their appointments
-    if (req.user.role === 'patient') {
-      query += 'WHERE patient_id = ? ';
-      params.push(req.user.userId);
-    }
-
-    query += 'ORDER BY appointment_date DESC, appointment_time DESC';
-
-    const [appointments] = await connection.execute(query, params);
-
+    const [appointments] = await connection.execute(
+      `SELECT id, doctor_name, appointment_date, appointment_time, 
+       appointment_type, status FROM appointments WHERE patient_id = ? 
+       ORDER BY appointment_date DESC, appointment_time DESC`,
+      [req.user.userId]
+    );
     connection.release();
-    res.json({ appointments });
+    res.json(appointments);
   } catch (error) {
-    console.error('Appointments fetch error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
-// Update appointment status (for doctors)
-app.put('/api/appointments/:id/status', authenticateToken, async (req, res) => {
+// Update appointment status
+app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next) => {
   try {
-    const { id } = req.params;
     const { status } = req.body;
-
+    const appointmentId = req.params.id;
+    
     if (!['pending', 'confirmed', 'completed', 'cancelled'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
     const connection = await pool.getConnection();
-
     const [result] = await connection.execute(
-      'UPDATE appointments SET status = ? WHERE id = ?',
-      [status, id]
+      'UPDATE appointments SET status = ? WHERE id = ? AND patient_id = ?',
+      [status, appointmentId, req.user.userId]
     );
-
     connection.release();
 
     if (result.affectedRows === 0) {
@@ -382,39 +381,58 @@ app.put('/api/appointments/:id/status', authenticateToken, async (req, res) => {
 
     res.json({ message: 'Appointment status updated successfully' });
   } catch (error) {
-    console.error('Appointment update error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
-// Delete appointment
-app.delete('/api/appointments/:id', authenticateToken, async (req, res) => {
+// Admin route to get all users
+app.get('/api/admin/users', authenticateToken, async (req, res, next) => {
   try {
-    const { id } = req.params;
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
     const connection = await pool.getConnection();
-
-    let query = 'DELETE FROM appointments WHERE id = ?';
-    let params = [id];
-
-    // If user is a patient, only allow deleting their own appointments
-    if (req.user.role === 'patient') {
-      query += ' AND patient_id = ?';
-      params.push(req.user.userId);
-    }
-
-    const [result] = await connection.execute(query, params);
-
+    const [users] = await connection.execute(
+      'SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC'
+    );
     connection.release();
+    res.json(users);
+  } catch (error) {
+    next(error);
+  }
+});
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Appointment not found or unauthorized' });
+// Admin route to get all appointments
+app.get('/api/admin/appointments', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
     }
 
-    res.json({ message: 'Appointment deleted successfully' });
+    const connection = await pool.getConnection();
+    const [appointments] = await connection.execute(
+      `SELECT a.*, u.email as patient_email 
+       FROM appointments a 
+       JOIN users u ON a.patient_id = u.id 
+       ORDER BY a.appointment_date DESC, a.appointment_time DESC`
+    );
+    connection.release();
+    res.json(appointments);
   } catch (error) {
-    console.error('Appointment deletion error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Central error handler
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start server

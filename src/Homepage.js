@@ -1,13 +1,27 @@
 import React, { useState } from 'react';
-import { Stethoscope, Calendar, Clock, Shield, Users, Star, ArrowRight, Mail, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
-import Button from './Components/button';
+import { 
+  Stethoscope, 
+  Calendar, 
+  Clock, 
+  Shield, 
+  Users, 
+  Star, 
+  ArrowRight, 
+  Mail, 
+  Lock, 
+  User, 
+  Eye, 
+  EyeOff, 
+  AlertCircle 
+} from 'lucide-react';
+import Button from './Components/button.js';
 import './styles/Homepage.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 const Homepage = ({ onLogin = () => {} }) => {
   const [showAuth, setShowAuth] = useState(false);
-  const [authMode, setAuthMode] = useState('signin'); // 'signin' or 'register'
+  const [authMode, setAuthMode] = useState('signin');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -18,12 +32,21 @@ const Homepage = ({ onLogin = () => {} }) => {
     confirmPassword: ''
   });
 
+  // Sanitize input to prevent XSS
+  const sanitizeInput = (input) => {
+    return input
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
   const handleInputChange = (e) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: sanitizeInput(value)
     });
-    // Clear error when user starts typing
     if (error) setError('');
   };
 
@@ -38,8 +61,14 @@ const Homepage = ({ onLogin = () => {} }) => {
         setError('Please enter your full name');
         return false;
       }
-      if (formData.password.length < 6) {
-        setError('Password must be at least 6 characters long');
+      if (formData.password.length < 8) {
+        setError('Password must be at least 8 characters long');
+        return false;
+      }
+      if (!/[A-Z]/.test(formData.password) || 
+          !/[a-z]/.test(formData.password) || 
+          !/[0-9]/.test(formData.password)) {
+        setError('Password must contain uppercase, lowercase, and numbers');
         return false;
       }
       if (formData.password !== formData.confirmPassword) {
@@ -60,9 +89,7 @@ const Homepage = ({ onLogin = () => {} }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setLoading(true);
     setError('');
@@ -71,13 +98,13 @@ const Homepage = ({ onLogin = () => {} }) => {
       const endpoint = authMode === 'register' ? '/register' : '/login';
       const payload = authMode === 'register' 
         ? {
-            name: formData.name,
-            email: formData.email,
+            name: formData.name.trim(),
+            email: formData.email.trim().toLowerCase(),
             password: formData.password,
-            role: 'patient' // Default role
+            role: 'patient'
           }
         : {
-            email: formData.email,
+            email: formData.email.trim().toLowerCase(),
             password: formData.password
           };
 
@@ -86,30 +113,25 @@ const Homepage = ({ onLogin = () => {} }) => {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Something went wrong');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Authentication failed');
       }
 
-      // Store token in localStorage
+      const data = await response.json();
+
+      // Store token and user data
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
-      // Success message
-      if (authMode === 'register') {
-        alert('Registration successful! Welcome to MedSchedule.');
-      } else {
-        alert('Login successful! Welcome back.');
-      }
-
-      // Call the onLogin callback to update parent component
+      // Call parent callback
       onLogin(data.user, data.token);
 
-      // Reset form
+      // Reset form and close auth modal
       setFormData({ email: '', password: '', name: '', confirmPassword: '' });
       setShowAuth(false);
 
@@ -263,7 +285,7 @@ const Homepage = ({ onLogin = () => {} }) => {
                     placeholder="Enter your password"
                     required
                     disabled={loading}
-                    minLength={authMode === 'register' ? 6 : undefined}
+                    minLength={authMode === 'register' ? 8 : undefined}
                   />
                   <button
                     type="button"
@@ -275,7 +297,9 @@ const Homepage = ({ onLogin = () => {} }) => {
                   </button>
                 </div>
                 {authMode === 'register' && (
-                  <small className="form-hint">Password must be at least 6 characters long</small>
+                  <small className="form-hint">
+                    Password must be at least 8 characters with uppercase, lowercase, and numbers
+                  </small>
                 )}
               </div>
 
