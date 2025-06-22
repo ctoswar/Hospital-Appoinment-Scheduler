@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles/index.css';
 import reportWebVitals from './reportWebVitals';
-import Homepage from './Homepage';
+import App from './App';
 
 const handleLogin = (user, token) => {
   console.log('User logged in:', user);
@@ -12,7 +12,7 @@ const handleLogin = (user, token) => {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <Homepage onLogin={handleLogin} />
+    <App onLogin={handleLogin} />
   </React.StrictMode>
 );
 
