@@ -1,13 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import ReactDOM from 'react-dom/client';
-import './styles/index.css';
-import reportWebVitals from './reportWebVitals';
 import Homepage from './Homepage';
-import PatientPortal from './App'; // Changed from App to PatientPortal to match your component
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import App from './App'; // Your existing App.js dashboard
 
-const AppWrapper = () => {
-  const navigate = useNavigate();
+const Main = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -25,6 +20,7 @@ const AppWrapper = () => {
         }
       } catch (error) {
         console.error('Error checking authentication:', error);
+        // Clear invalid data
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       } finally {
@@ -35,20 +31,19 @@ const AppWrapper = () => {
     checkAuth();
   }, []);
 
+  // Handle successful login
   const handleLogin = (userData, token) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
     setIsAuthenticated(true);
-    navigate('/dashboard'); // Redirect after login
+    console.log('User logged in successfully:', userData);
   };
 
+  // Handle logout (you can call this from your App.js)
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
     setIsAuthenticated(false);
-    navigate('/');
   };
 
   // Show loading while checking authentication
@@ -75,10 +70,11 @@ const AppWrapper = () => {
     );
   }
 
+  // Show Homepage if not authenticated, your App.js if authenticated
   return (
     <>
       {isAuthenticated ? (
-        <PatientPortal onLogout={handleLogout} user={user} />
+        <App user={user} onLogout={handleLogout} />
       ) : (
         <Homepage onLogin={handleLogin} />
       )}
@@ -86,17 +82,4 @@ const AppWrapper = () => {
   );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<AppWrapper />} />
-        <Route path="/dashboard" element={<AppWrapper />} />
-        {/* Add other routes as needed */}
-      </Routes>
-    </BrowserRouter>
-  </React.StrictMode>
-);
-
-reportWebVitals();
+export default Main;
