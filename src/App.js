@@ -26,6 +26,11 @@ import {
 import './styles/PatientPortal.css';
 import './styles/Navigation.css';
 import { useNavigate } from 'react-router-dom';
+// Add these imports at the top of your App.js file
+import Homepage from './Homepage';
+import DoctorPortal from './DoctorPortal';
+
+// The rest of your existing PatientPortal component code...
 
 const PatientPortal = ({ onLogout }) => { 
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -852,7 +857,6 @@ const PatientPortal = ({ onLogout }) => {
 
     const handleLogout = () => {
       console.log('Logging out...');
-      // alert('Logged out successfully!');
       setIsSettingsOpen(false);
       onLogout();
     };
@@ -954,4 +958,45 @@ const PatientPortal = ({ onLogout }) => {
   );
 };
 
-export default PatientPortal;
+// New MainApp component for routing
+const MainApp = () => {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+
+  useEffect(() => {
+    // Check if user is already logged in
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  const handleLogin = (userData, userToken) => {
+    setUser(userData);
+    setToken(userToken);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+    setToken(null);
+  };
+
+  // Route based on user role
+  if (!user) {
+    return <Homepage onLogin={handleLogin} />;
+  }
+
+  if (user.role === 'doctor') {
+    return <DoctorPortal user={user} onLogout={handleLogout} />;
+  }
+
+  // Default to patient portal
+  return <PatientPortal onLogout={handleLogout} />;
+};
+
+export default MainApp;

@@ -1,0 +1,71 @@
+/* DoctorPortal.css */
+.doctor-gradient {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+}
+
+.doctor-sidebar {
+  background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+}
+
+.doctor-navbar {
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+}
+
+.doctor-logo {
+  background: rgba(255, 255, 255, 0.2) !important;
+}
+
+.doctor-avatar {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+}
+
+.doctor-appointment {
+  border-left: 4px solid #667eea;
+}
+
+.patient-avatar {
+  width: 3rem;
+  height: 3rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 1.25rem;
+}
+
+.btn-success {
+  background: #10b981;
+  color: white;
+}
+
+.btn-success:hover {
+  background: #059669;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.notification-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #ef4444;
+  color: white;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}

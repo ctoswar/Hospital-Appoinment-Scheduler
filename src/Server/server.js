@@ -67,6 +67,7 @@ async function initializeDatabase() {
   try {
     connection = await pool.getConnection();
     
+    // Create tables if they don't exist
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -96,10 +97,12 @@ async function initializeDatabase() {
       )
     `);
 
+    // Create doctors table with the new schema
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT,
+        doctor_id VARCHAR(20) UNIQUE,
         name VARCHAR(255) NOT NULL,
         specialty VARCHAR(255) NOT NULL,
         available BOOLEAN DEFAULT true,
@@ -108,17 +111,27 @@ async function initializeDatabase() {
       )
     `);
 
+    // Check if doctor_id column exists, if not add it
+    try {
+      await connection.execute('SELECT doctor_id FROM doctors LIMIT 1');
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        console.log('Adding doctor_id column to doctors table');
+        await connection.execute('ALTER TABLE doctors ADD COLUMN doctor_id VARCHAR(20) UNIQUE AFTER user_id');
+      }
+    }
+
     const [doctors] = await connection.execute('SELECT COUNT(*) as count FROM doctors');
     if (doctors[0].count === 0) {
       const sampleDoctors = [
-        ['Dr. Johnson', 'General Practice', true],
-        ['Dr. Lee', 'Cardiology', true],
-        ['Dr. Brown', 'Dermatology', false],
-        ['Dr. Davis', 'Orthopedics', true]
+        [null, 'DOC001', 'Dr. Johnson', 'General Practice', true],
+        [null, 'DOC002', 'Dr. Lee', 'Cardiology', true],
+        [null, 'DOC003', 'Dr. Brown', 'Dermatology', false],
+        [null, 'DOC004', 'Dr. Davis', 'Orthopedics', true]
       ];
       for (const doctor of sampleDoctors) {
         await connection.execute(
-          'INSERT INTO doctors (name, specialty, available) VALUES (?, ?, ?)',
+          'INSERT INTO doctors (user_id, doctor_id, name, specialty, available) VALUES (?, ?, ?, ?, ?)',
           doctor
         );
       }
@@ -197,6 +210,107 @@ app.post('/api/register', async (req, res, next) => {
       message: 'Registration successful',
       token,
       user: { id: result.insertId, name, email, role }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Doctor registration with ID verification
+app.post('/api/register/doctor', async (req, res, next) => {
+  try {
+    const { name, email, password, doctorId, specialty } = req.body;
+
+    if (!name || !email || !password || !doctorId || !specialty) {
+      return res.status(400).json({ error: 'All fields are required including Doctor ID' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const validDoctorIds = [
+      'DOC001', 'DOC002', 'DOC003', 'DOC004', 'DOC005',
+      'DOC006', 'DOC007', 'DOC008', 'DOC009', 'DOC010'
+    ];
+
+    if (!validDoctorIds.includes(doctorId)) {
+      return res.status(400).json({ error: 'Invalid Doctor ID. Please contact administration.' });
+    }
+
+    const connection = await pool.getConnection();
+    
+    // Check if email already exists
+    const [existingUsers] = await connection.execute(
+      'SELECT id FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (existingUsers.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+
+    // Check if doctor ID is already used
+    let existingDoctors = [];
+    try {
+      [existingDoctors] = await connection.execute(
+        'SELECT id FROM doctors WHERE doctor_id = ?',
+        [doctorId]
+      );
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        console.log('doctor_id column not found, will be created during registration');
+      } else {
+        throw err;
+      }
+    }
+
+    if (existingDoctors.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Doctor ID already registered' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create user account
+    const [userResult] = await connection.execute(
+      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+      [name, email, hashedPassword, 'doctor']
+    );
+
+    // Check if doctor exists by name and specialty
+    const [doctorCheck] = await connection.execute(
+      'SELECT id FROM doctors WHERE name = ? AND specialty = ?',
+      [name, specialty]
+    );
+
+    if (doctorCheck.length > 0) {
+      // Update existing doctor record
+      await connection.execute(
+        'UPDATE doctors SET user_id = ?, doctor_id = ? WHERE id = ?',
+        [userResult.insertId, doctorId, doctorCheck[0].id]
+      );
+    } else {
+      // Create new doctor record
+      await connection.execute(
+        'INSERT INTO doctors (user_id, doctor_id, name, specialty, available) VALUES (?, ?, ?, ?, ?)',
+        [userResult.insertId, doctorId, name, specialty, true]
+      );
+    }
+
+    connection.release();
+
+    const token = jwt.sign(
+      { userId: userResult.insertId, email, name, role: 'doctor', doctorId },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      message: 'Doctor registration successful',
+      token,
+      user: { id: userResult.insertId, name, email, role: 'doctor', doctorId, specialty }
     });
   } catch (error) {
     next(error);
@@ -358,6 +472,29 @@ app.get('/api/appointments', authenticateToken, async (req, res, next) => {
   }
 });
 
+// Get doctor's appointments
+app.get('/api/doctor/appointments', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'doctor') {
+      return res.status(403).json({ error: 'Doctor access required' });
+    }
+
+    const connection = await pool.getConnection();
+    const [appointments] = await connection.execute(
+      `SELECT a.*, u.email as patient_email 
+       FROM appointments a 
+       JOIN users u ON a.patient_id = u.id 
+       WHERE a.doctor_name = ?
+       ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
+      [req.user.name]
+    );
+    connection.release();
+    res.json(appointments);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Update appointment status
 app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next) => {
   try {
@@ -372,6 +509,37 @@ app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next
     const [result] = await connection.execute(
       'UPDATE appointments SET status = ? WHERE id = ? AND patient_id = ?',
       [status, appointmentId, req.user.userId]
+    );
+    connection.release();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    res.json({ message: 'Appointment status updated successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update appointment status (doctor)
+app.put('/api/doctor/appointments/:id/status', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'doctor') {
+      return res.status(403).json({ error: 'Doctor access required' });
+    }
+
+    const { status } = req.body;
+    const appointmentId = req.params.id;
+    
+    if (!['pending', 'confirmed', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const connection = await pool.getConnection();
+    const [result] = await connection.execute(
+      'UPDATE appointments SET status = ? WHERE id = ? AND doctor_name = ?',
+      [status, appointmentId, req.user.name]
     );
     connection.release();
 
