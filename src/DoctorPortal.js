@@ -1,28 +1,9 @@
-// Create a new file: DoctorPortal.js
 import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import { 
-  Calendar, 
-  Clock, 
-  User, 
-  Stethoscope, 
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  Activity,
-  FileText,
-  Bell,
-  Settings,
-  Search,
-  Filter,
-  Users,
-  Heart,
-  TrendingUp,
-  Phone,
-  Mail,
-  MapPin,
-  Shield,
-  LogOut,
-  Edit
+  Calendar, Clock, User, Stethoscope, CheckCircle, XCircle, AlertCircle,
+  Activity, FileText, Bell, Settings, Search, Filter, Users, Heart,
+  TrendingUp, Phone, Mail, MapPin, Shield, LogOut, Edit
 } from 'lucide-react';
 import './styles/DoctorPortal.css';
 
@@ -34,34 +15,52 @@ const DoctorPortal = ({ user, onLogout }) => {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [socket, setSocket] = useState(null);
 
-  // Fetch doctor's appointments
+  // Initialize socket and fetch appointments
   useEffect(() => {
-    fetchAppointments();
-  }, []);
+    const fetchAppointments = async () => {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/doctor/appointments`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include'
+        });
 
-  const fetchAppointments = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/doctor/appointments`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAppointments(data);
+        if (response.ok) {
+          setAppointments(await response.json());
+        }
+      } catch (error) {
+        console.error('Error fetching appointments:', error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching appointments:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    fetchAppointments();
+
+    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    setSocket(newSocket);
+
+    newSocket.on('appointments:update', () => {
+      console.log('Appointments updated - refreshing doctor view');
+      fetchAppointments();
+    });
+
+    return () => {
+      newSocket.off('appointments:update');
+      newSocket.disconnect();
+    };
+  }, []);
 
   const updateAppointmentStatus = async (appointmentId, status) => {
     try {
@@ -76,14 +75,15 @@ const DoctorPortal = ({ user, onLogout }) => {
         body: JSON.stringify({ status })
       });
 
-      if (response.ok) {
-        fetchAppointments(); // Refresh the list
+      if (!response.ok) {
+        throw new Error('Failed to update status');
       }
     } catch (error) {
       console.error('Error updating appointment:', error);
     }
   };
 
+  // Filtering functions
   const filteredAppointments = appointments.filter(apt => {
     const matchesSearch = apt.patient_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          apt.appointment_type.toLowerCase().includes(searchTerm.toLowerCase());
@@ -509,13 +509,17 @@ const DoctorPortal = ({ user, onLogout }) => {
     }
   };
 
-  return (
+ return (
     <div style={{ minHeight: '100vh' }}>
       <Navigation />
       <Sidebar setCurrentPage={setCurrentPage} currentPage={currentPage} />
       
       <main style={{ marginLeft: '16rem', paddingTop: '4rem', minHeight: '100vh' }}>
-        {renderCurrentPage()}
+        {loading ? (
+          <div className="loading-spinner">Loading appointments...</div>
+        ) : (
+          renderCurrentPage()
+        )}
       </main>
     </div>
   );

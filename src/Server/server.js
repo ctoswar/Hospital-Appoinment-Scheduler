@@ -5,9 +5,19 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const http = require('http');
+const socketIo = require('socket.io');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: 'http://localhost:3000',
+    credentials: true,
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 
 // Validate JWT_SECRET exists
@@ -97,7 +107,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Create doctors table with the new schema
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -111,7 +120,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Check if doctor_id column exists, if not add it
     try {
       await connection.execute('SELECT doctor_id FROM doctors LIMIT 1');
     } catch (err) {
@@ -167,7 +175,21 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// API Routes with improved error handling
+// Socket.IO logic for broadcasting updates
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+// Helper to emit to all clients
+function broadcastAppointmentsChange() {
+  io.emit('appointments:update');
+}
+
+// API Routes
 
 // User registration
 app.post('/api/register', async (req, res, next) => {
@@ -240,7 +262,6 @@ app.post('/api/register/doctor', async (req, res, next) => {
 
     const connection = await pool.getConnection();
     
-    // Check if email already exists
     const [existingUsers] = await connection.execute(
       'SELECT id FROM users WHERE email = ?',
       [email]
@@ -251,7 +272,6 @@ app.post('/api/register/doctor', async (req, res, next) => {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
-    // Check if doctor ID is already used
     let existingDoctors = [];
     try {
       [existingDoctors] = await connection.execute(
@@ -273,26 +293,22 @@ app.post('/api/register/doctor', async (req, res, next) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Create user account
     const [userResult] = await connection.execute(
       'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
       [name, email, hashedPassword, 'doctor']
     );
 
-    // Check if doctor exists by name and specialty
     const [doctorCheck] = await connection.execute(
       'SELECT id FROM doctors WHERE name = ? AND specialty = ?',
       [name, specialty]
     );
 
     if (doctorCheck.length > 0) {
-      // Update existing doctor record
       await connection.execute(
         'UPDATE doctors SET user_id = ?, doctor_id = ? WHERE id = ?',
         [userResult.insertId, doctorId, doctorCheck[0].id]
       );
     } else {
-      // Create new doctor record
       await connection.execute(
         'INSERT INTO doctors (user_id, doctor_id, name, specialty, available) VALUES (?, ?, ?, ?, ?)',
         [userResult.insertId, doctorId, name, specialty, true]
@@ -384,14 +400,12 @@ app.delete('/api/user/delete/:id', authenticateToken, async (req, res, next) => 
   try {
     const userId = req.params.id;
     
-    // Check if user has permission (admin or deleting own account)
     if (req.user.role !== 'admin' && req.user.userId !== parseInt(userId)) {
       return res.status(403).json({ error: 'Unauthorized to delete this account' });
     }
 
     const connection = await pool.getConnection();
     
-    // Check if user exists
     const [users] = await connection.execute(
       'SELECT id, name FROM users WHERE id = ?',
       [userId]
@@ -402,7 +416,6 @@ app.delete('/api/user/delete/:id', authenticateToken, async (req, res, next) => 
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Delete user (appointments will be cascade deleted due to foreign key)
     await connection.execute('DELETE FROM users WHERE id = ?', [userId]);
     connection.release();
 
@@ -450,6 +463,7 @@ app.post('/api/appointments', authenticateToken, async (req, res, next) => {
       message: 'Appointment created successfully',
       appointmentId: result.insertId
     });
+    broadcastAppointmentsChange();
   } catch (error) {
     next(error);
   }
@@ -517,6 +531,7 @@ app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next
     }
 
     res.json({ message: 'Appointment status updated successfully' });
+    broadcastAppointmentsChange();
   } catch (error) {
     next(error);
   }
@@ -548,6 +563,7 @@ app.put('/api/doctor/appointments/:id/status', authenticateToken, async (req, re
     }
 
     res.json({ message: 'Appointment status updated successfully' });
+    broadcastAppointmentsChange();
   } catch (error) {
     next(error);
   }
@@ -597,14 +613,105 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Get appointment details by ID
+app.get('/api/appointments/:id', authenticateToken, async (req, res, next) => {
+  try {
+    const appointmentId = req.params.id;
+    const connection = await pool.getConnection();
+    const [appointments] = await connection.execute(
+      `SELECT a.*, u.email as patient_email 
+       FROM appointments a 
+       JOIN users u ON a.patient_id = u.id 
+       WHERE a.id = ?`,
+      [appointmentId]
+    );
+    connection.release();
+
+    if (appointments.length === 0) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    res.json(appointments[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete appointments
+app.delete('/api/appointments/:id', authenticateToken, async (req, res, next) => {
+  try {
+    const appointmentId = req.params.id;
+    const connection = await pool.getConnection();
+    
+    const [appointments] = await connection.execute(
+      'SELECT patient_id FROM appointments WHERE id = ?',
+      [appointmentId]
+    );
+    
+    if (appointments.length === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    
+    if (appointments[0].patient_id !== req.user.userId) {
+      connection.release();
+      return res.status(403).json({ error: 'Unauthorized to delete this appointment' });
+    }
+
+    await connection.execute('DELETE FROM appointments WHERE id = ?', [appointmentId]);
+    connection.release();
+
+    res.json({ message: 'Appointment deleted successfully' });
+    broadcastAppointmentsChange();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update appointments
+app.put('/api/appointments/:id', authenticateToken, async (req, res, next) => {
+  try {
+    const { date, time, type } = req.body;
+    const appointmentId = req.params.id;
+    
+    const connection = await pool.getConnection();
+    
+    const [appointments] = await connection.execute(
+      'SELECT patient_id FROM appointments WHERE id = ?',
+      [appointmentId]
+    );
+    
+    if (appointments.length === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    
+    if (appointments[0].patient_id !== req.user.userId) {
+      connection.release();
+      return res.status(403).json({ error: 'Unauthorized to update this appointment' });
+    }
+
+    await connection.execute(
+      'UPDATE appointments SET appointment_date = ?, appointment_time = ?, appointment_type = ? WHERE id = ?',
+      [date, time, type, appointmentId]
+    );
+    connection.release();
+
+    res.json({ message: 'Appointment updated successfully' });
+    broadcastAppointmentsChange();
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Central error handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start server
-app.listen(PORT, async () => {
+// Start server with Socket.IO
+server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   await initializeDatabase();
 });

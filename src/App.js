@@ -1,160 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import { 
-  Calendar, 
-  Clock, 
-  User, 
-  Stethoscope, 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Heart,
-  Activity,
-  FileText,
-  Bell,
-  Settings,
-  Search,
-  Filter,
-  ChevronRight,
-  MapPin,
-  Phone,
-  Mail,
-  Star,
-  X,
-  Shield,
-  LogOut
+  Calendar, Clock, User, Stethoscope, Plus, Edit, Trash2, Heart,
+  Activity, FileText, Bell, Settings, Search, Filter, ChevronRight,
+  MapPin, Phone, Mail, Star, X, Shield, LogOut
 } from 'lucide-react';
 import './styles/PatientPortal.css';
 import './styles/Navigation.css';
 import { useNavigate } from 'react-router-dom';
-// Add these imports at the top of your App.js file
 import Homepage from './Homepage';
 import DoctorPortal from './DoctorPortal';
 
-// The rest of your existing PatientPortal component code...
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
-const PatientPortal = ({ onLogout }) => { 
+const PatientPortal = ({ user, onLogout }) => { 
+  // State management
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const navigate = useNavigate(); 
-  const [appointments, setAppointments] = useState([
-    {
-      id: 1,
-      patientName: 'John Smith',
-      doctorName: 'Dr. Sarah Johnson',
-      date: '2025-06-25',
-      time: '10:00',
-      type: 'General Checkup',
-      status: 'confirmed',
-      location: 'Main Clinic - Room 102',
-      avatar: '👨‍⚕️'
-    },
-    {
-      id: 2,
-      patientName: 'John Smith',
-      doctorName: 'Dr. Michael Lee',
-      date: '2025-06-28',
-      time: '14:30',
-      type: 'Cardiology Consultation',
-      status: 'pending',
-      location: 'Cardiology Wing - Room 205',
-      avatar: '🩺'
-    },
-    {
-      id: 3,
-      patientName: 'John Smith',
-      doctorName: 'Dr. Emily Brown',
-      date: '2025-07-02',
-      time: '09:15',
-      type: 'Follow-up Visit',
-      status: 'confirmed',
-      location: 'Main Clinic - Room 108',
-      avatar: '👩‍⚕️'
-    }
-  ]);
-
-  const [doctors] = useState([
-    { 
-      id: 1, 
-      name: 'Dr. Sarah Johnson', 
-      specialty: 'General Practice', 
-      available: true, 
-      rating: 4.9,
-      image: '👩‍⚕️',
-      nextAvailable: '2025-06-24'
-    },
-    { 
-      id: 2, 
-      name: 'Dr. Michael Lee', 
-      specialty: 'Cardiology', 
-      available: true, 
-      rating: 4.8,
-      image: '👨‍⚕️',
-      nextAvailable: '2025-06-25'
-    },
-    { 
-      id: 3, 
-      name: 'Dr. Emily Brown', 
-      specialty: 'Dermatology', 
-      available: true, 
-      rating: 4.9,
-      image: '👩‍⚕️',
-      nextAvailable: '2025-06-26'
-    },
-    { 
-      id: 4, 
-      name: 'Dr. James Davis', 
-      specialty: 'Orthopedics', 
-      available: false, 
-      rating: 4.7,
-      image: '👨‍⚕️',
-      nextAvailable: '2025-07-01'
-    }
-  ]);
-
+  const [appointments, setAppointments] = useState([]);
+  const [doctors, setDoctors] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [showBookingForm, setShowBookingForm] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [bookingData, setBookingData] = useState({
-    patientName: 'John Smith',
+    patientName: user?.name || 'Patient',
     doctorName: '',
     date: '',
     time: '',
     type: ''
   });
+  const [socket, setSocket] = useState(null);
+  const navigate = useNavigate();
 
-  const addAppointment = (appointmentData) => {
-    const newAppointment = {
-      id: appointments.length + 1,
-      ...appointmentData,
-      status: 'pending',
-      location: 'Main Clinic - TBD',
-      avatar: '📅'
-    };
-    setAppointments([...appointments, newAppointment]);
-  };
-
-  const updateAppointment = (updatedAppointment) => {
-    setAppointments(appointments.map(apt => 
-      apt.id === updatedAppointment.id ? updatedAppointment : apt
-    ));
-    setEditingAppointment(null);
-  };
-
-  const deleteAppointment = (id) => {
-    setAppointments(appointments.filter(apt => apt.id !== id));
-  };
-
-  const handleBooking = () => {
-    if (bookingData.patientName && bookingData.doctorName && bookingData.date && bookingData.time && bookingData.type) {
-      addAppointment(bookingData);
-      setBookingData({ 
-        patientName: 'John Smith', 
-        doctorName: '', 
-        date: '', 
-        time: '', 
-        type: '' 
-      });
-      setShowBookingForm(false);
+  // Handler functions
+ const handleBooking = () => {
+  const selectedDoctor = doctors.find(doc => doc.name === bookingData.doctorName);
+  if (selectedDoctor && bookingData.doctorName && bookingData.date && bookingData.time && bookingData.type) {
+    addAppointment({
+      doctor_id: selectedDoctor.id, // Add this
+      doctor_name: bookingData.doctorName,
+      appointment_date: bookingData.date,
+      appointment_time: bookingData.time,
+      appointment_type: bookingData.type,
+      patient_name: bookingData.patientName
+    });
     }
   };
 
@@ -164,16 +54,153 @@ const PatientPortal = ({ onLogout }) => {
     }
   };
 
+  // Socket.IO and data initialization
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        
+        const [appointmentsRes, doctorsRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/appointments`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+          }),
+          fetch(`${API_BASE_URL}/doctors`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+          })
+        ]);
+
+        if (appointmentsRes.ok) setAppointments(await appointmentsRes.json());
+        if (doctorsRes.ok) setDoctors(await doctorsRes.json());
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchInitialData();
+
+    // Socket.IO setup
+    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    setSocket(newSocket);
+
+    newSocket.on('appointments:update', () => {
+      console.log('Appointments updated - refreshing data');
+      fetchInitialData();
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.error('Socket connection error:', err);
+    });
+
+    return () => {
+      newSocket.off('appointments:update');
+      newSocket.disconnect();
+    };
+  }, []);
+
+  // Appointment CRUD operations
+  const addAppointment = async (appointmentData) => {
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/appointments`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        doctor_id: appointmentData.doctor_id, // Add this
+        doctor_name: appointmentData.doctor_name,
+        appointment_date: appointmentData.appointment_date,
+        appointment_time: appointmentData.appointment_time,
+        appointment_type: appointmentData.appointment_type,
+        patient_id: user.id,
+        patient_name: appointmentData.patient_name
+      })
+    });
+
+    if (response.ok) {
+      setBookingData({ 
+        patientName: user?.name || 'Patient',
+        doctorName: '', 
+        date: '', 
+        time: '', 
+        type: '' 
+      });
+      setShowBookingForm(false);
+    } else {
+      const errorData = await response.json();
+      console.error('Error response:', errorData);
+    }
+  } catch (error) {
+    console.error('Error adding appointment:', error);
+  }
+};
+
+  const updateAppointment = async (updatedAppointment) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/appointments/${updatedAppointment.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(updatedAppointment)
+      });
+
+      if (response.ok) {
+        setEditingAppointment(null);
+      }
+    } catch (error) {
+      console.error('Error updating appointment:', error);
+    }
+  };
+
+  const deleteAppointment = async (id) => {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_BASE_URL}/appointments/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include'
+      });
+    } catch (error) {
+      console.error('Error deleting appointment:', error);
+    }
+  };
+
+  // Filtering and helper functions
   const filteredAppointments = appointments.filter(apt => {
-    const matchesSearch = apt.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         apt.type.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = apt.doctor_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.appointment_type?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = filterStatus === 'all' || apt.status === filterStatus;
     return matchesSearch && matchesFilter;
   });
 
   const upcomingAppointments = appointments.filter(apt => {
-    const appointmentDate = new Date(apt.date);
     const today = new Date();
+    const appointmentDate = new Date(apt.appointment_date);
     return appointmentDate >= today && apt.status !== 'cancelled';
   }).slice(0, 3);
 
@@ -949,7 +976,11 @@ const PatientPortal = ({ onLogout }) => {
       <Sidebar setCurrentPage={setCurrentPage} currentPage={currentPage} />
       
       <main style={{ marginLeft: '16rem', paddingTop: '4rem', minHeight: '100vh' }}>
-        {renderCurrentPage()}
+        {loading ? (
+          <div className="loading-spinner">Loading...</div>
+        ) : (
+          renderCurrentPage()
+        )}
       </main>
 
       <BookingFormModal />
@@ -958,13 +989,11 @@ const PatientPortal = ({ onLogout }) => {
   );
 };
 
-// New MainApp component for routing
 const MainApp = () => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
 
   useEffect(() => {
-    // Check if user is already logged in
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
     
@@ -975,6 +1004,8 @@ const MainApp = () => {
   }, []);
 
   const handleLogin = (userData, userToken) => {
+    localStorage.setItem('token', userToken);
+    localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
     setToken(userToken);
   };
@@ -986,17 +1017,9 @@ const MainApp = () => {
     setToken(null);
   };
 
-  // Route based on user role
-  if (!user) {
-    return <Homepage onLogin={handleLogin} />;
-  }
-
-  if (user.role === 'doctor') {
-    return <DoctorPortal user={user} onLogout={handleLogout} />;
-  }
-
-  // Default to patient portal
-  return <PatientPortal onLogout={handleLogout} />;
+  if (!user) return <Homepage onLogin={handleLogin} />;
+  if (user.role === 'doctor') return <DoctorPortal user={user} onLogout={handleLogout} />;
+  return <PatientPortal user={user} onLogout={handleLogout} />;
 };
 
 export default MainApp;
