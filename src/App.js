@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
-  Calendar, Clock, User, Stethoscope, Plus, Edit, Trash2, Heart,
+  Calendar, Clock, User, Stethoscope, Plus, Trash2, Heart,
   Activity, FileText, Bell, Settings, Search, Filter, ChevronRight,
   MapPin, Phone, Mail, Star, X, Shield, LogOut
 } from 'lucide-react';
@@ -20,7 +20,6 @@ const PatientPortal = ({ user, onLogout }) => {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showBookingForm, setShowBookingForm] = useState(false);
-  const [editingAppointment, setEditingAppointment] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [bookingData, setBookingData] = useState({
@@ -34,23 +33,17 @@ const PatientPortal = ({ user, onLogout }) => {
   const navigate = useNavigate();
 
   // Handler functions
- const handleBooking = () => {
-  const selectedDoctor = doctors.find(doc => doc.name === bookingData.doctorName);
-  if (selectedDoctor && bookingData.doctorName && bookingData.date && bookingData.time && bookingData.type) {
-    addAppointment({
-      doctor_id: selectedDoctor.id, // Add this
-      doctor_name: bookingData.doctorName,
-      appointment_date: bookingData.date,
-      appointment_time: bookingData.time,
-      appointment_type: bookingData.type,
-      patient_name: bookingData.patientName
-    });
-    }
-  };
-
-  const handleEditSave = () => {
-    if (editingAppointment) {
-      updateAppointment(editingAppointment);
+  const handleBooking = () => {
+    const selectedDoctor = doctors.find(doc => doc.name === bookingData.doctorName);
+    if (selectedDoctor && bookingData.doctorName && bookingData.date && bookingData.time && bookingData.type) {
+      addAppointment({
+        doctor_id: selectedDoctor.id,
+        doctor_name: bookingData.doctorName,
+        appointment_date: bookingData.date,
+        appointment_time: bookingData.time,
+        appointment_type: bookingData.type,
+        patient_name: bookingData.patientName
+      });
     }
   };
 
@@ -115,62 +108,41 @@ const PatientPortal = ({ user, onLogout }) => {
 
   // Appointment CRUD operations
   const addAppointment = async (appointmentData) => {
-  try {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE_URL}/appointments`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        doctor_id: appointmentData.doctor_id, // Add this
-        doctor_name: appointmentData.doctor_name,
-        appointment_date: appointmentData.appointment_date,
-        appointment_time: appointmentData.appointment_time,
-        appointment_type: appointmentData.appointment_type,
-        patient_id: user.id,
-        patient_name: appointmentData.patient_name
-      })
-    });
-
-    if (response.ok) {
-      setBookingData({ 
-        patientName: user?.name || 'Patient',
-        doctorName: '', 
-        date: '', 
-        time: '', 
-        type: '' 
-      });
-      setShowBookingForm(false);
-    } else {
-      const errorData = await response.json();
-      console.error('Error response:', errorData);
-    }
-  } catch (error) {
-    console.error('Error adding appointment:', error);
-  }
-};
-
-  const updateAppointment = async (updatedAppointment) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/appointments/${updatedAppointment.id}`, {
-        method: 'PUT',
+      const response = await fetch(`${API_BASE_URL}/appointments`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         credentials: 'include',
-        body: JSON.stringify(updatedAppointment)
+        body: JSON.stringify({
+          doctor_id: appointmentData.doctor_id,
+          doctor_name: appointmentData.doctor_name,
+          appointment_date: appointmentData.appointment_date,
+          appointment_time: appointmentData.appointment_time,
+          appointment_type: appointmentData.appointment_type,
+          patient_id: user.id,
+          patient_name: appointmentData.patient_name
+        })
       });
 
       if (response.ok) {
-        setEditingAppointment(null);
+        setBookingData({ 
+          patientName: user?.name || 'Patient',
+          doctorName: '', 
+          date: '', 
+          time: '', 
+          type: '' 
+        });
+        setShowBookingForm(false);
+      } else {
+        const errorData = await response.json();
+        console.error('Error response:', errorData);
       }
     } catch (error) {
-      console.error('Error updating appointment:', error);
+      console.error('Error adding appointment:', error);
     }
   };
 
@@ -235,7 +207,7 @@ const PatientPortal = ({ user, onLogout }) => {
       <div className="card gradient-card" style={{ marginBottom: '2rem', padding: '2rem' }}>
         <div style={{ position: 'relative', zIndex: 2 }}>
           <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '1rem', color: 'white' }}>
-            Welcome back, John! 👋
+            Welcome back, {user?.name}! 👋
           </h2>
           <p style={{ color: 'rgba(255, 255, 255, 0.9)', marginBottom: '1.5rem' }}>
             Your health journey continues here. Stay on top of your appointments and wellness.
@@ -303,21 +275,21 @@ const PatientPortal = ({ user, onLogout }) => {
             <div key={appointment.id} className="appointment-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <div className="appointment-avatar">
-                  {appointment.avatar}
+                  {appointment.doctor_name?.charAt(0) || 'D'}
                 </div>
                 <div style={{ flex: 1 }}>
                   <h4 style={{ fontWeight: '600', color: '#1a1a1a', marginBottom: '0.25rem' }}>
-                    {appointment.doctorName}
+                    {appointment.doctor_name}
                   </h4>
-                  <p style={{ color: '#666', marginBottom: '0.5rem' }}>{appointment.type}</p>
+                  <p style={{ color: '#666', marginBottom: '0.5rem' }}>{appointment.appointment_type}</p>
                   <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: '#888' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <Calendar size={14} />
-                      {appointment.date}
+                      {appointment.appointment_date}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <Clock size={14} />
-                      {appointment.time}
+                      {appointment.appointment_time}
                     </span>
                   </div>
                 </div>
@@ -339,7 +311,7 @@ const PatientPortal = ({ user, onLogout }) => {
           <h2 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '0.5rem' }}>
             My Appointments
           </h2>
-          <p style={{ color: '#666' }}>Manage your scheduled visits</p>
+          <p style={{ color: '#666' }}>View your scheduled visits</p>
         </div>
         <button
           onClick={() => setShowBookingForm(true)}
@@ -384,25 +356,25 @@ const PatientPortal = ({ user, onLogout }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <div className="appointment-avatar">
-                  {appointment.avatar}
+                  {appointment.doctor_name?.charAt(0) || 'D'}
                 </div>
                 <div>
                   <h4 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1a1a1a', marginBottom: '0.25rem' }}>
-                    {appointment.doctorName}
+                    {appointment.doctor_name}
                   </h4>
-                  <p style={{ color: '#666', marginBottom: '0.5rem' }}>{appointment.type}</p>
+                  <p style={{ color: '#666', marginBottom: '0.5rem' }}>{appointment.appointment_type}</p>
                   <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: '#888' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <Calendar size={16} />
-                      {appointment.date}
+                      {appointment.appointment_date}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <Clock size={16} />
-                      {appointment.time}
+                      {appointment.appointment_time}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <MapPin size={16} />
-                      {appointment.location}
+                      Clinic
                     </span>
                   </div>
                 </div>
@@ -413,14 +385,9 @@ const PatientPortal = ({ user, onLogout }) => {
                   {appointment.status}
                 </span>
                 <button
-                  onClick={() => setEditingAppointment(appointment)}
-                  className="btn-icon"
-                >
-                  <Edit size={16} />
-                </button>
-                <button
                   onClick={() => deleteAppointment(appointment.id)}
                   className="btn-icon"
+                  title="Cancel Appointment"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -466,7 +433,7 @@ const PatientPortal = ({ user, onLogout }) => {
         {doctors.map((doctor) => (
           <div key={doctor.id} className="card doctor-card hover-lift">
             <div className="doctor-avatar">
-              {doctor.image}
+              {doctor.name?.charAt(0) || 'D'}
             </div>
             <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1a1a1a', marginBottom: '0.5rem' }}>
               {doctor.name}
@@ -474,19 +441,19 @@ const PatientPortal = ({ user, onLogout }) => {
             <p style={{ color: '#666', fontSize: '0.875rem', marginBottom: '1rem' }}>{doctor.specialty}</p>
             <div className="rating-stars">
               <Star className="star-icon" size={16} fill="currentColor" />
-              <span style={{ fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a' }}>{doctor.rating}</span>
+              <span style={{ fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a' }}>{doctor.rating || '4.8'}</span>
               <span style={{ fontSize: '0.875rem', color: '#666' }}>(127 reviews)</span>
             </div>
             
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
                 <span style={{ color: '#666' }}>Next Available:</span>
-                <span style={{ fontWeight: '500', color: '#1a1a1a' }}>{doctor.nextAvailable}</span>
+                <span style={{ fontWeight: '500', color: '#1a1a1a' }}>{doctor.nextAvailable || 'Today'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
                 <span style={{ color: '#666' }}>Status:</span>
-                <span className={`status-badge ${doctor.available ? 'status-confirmed' : 'status-cancelled'}`}>
-                  {doctor.available ? 'Available' : 'Busy'}
+                <span className={`status-badge ${doctor.available !== false ? 'status-confirmed' : 'status-cancelled'}`}>
+                  {doctor.available !== false ? 'Available' : 'Busy'}
                 </span>
               </div>
             </div>
@@ -496,15 +463,15 @@ const PatientPortal = ({ user, onLogout }) => {
                 setBookingData({...bookingData, doctorName: doctor.name});
                 setShowBookingForm(true);
               }}
-              disabled={!doctor.available}
-              className={doctor.available ? 'btn btn-primary' : 'btn btn-secondary'}
+              disabled={doctor.available === false}
+              className={doctor.available !== false ? 'btn btn-primary' : 'btn btn-secondary'}
               style={{ 
                 width: '100%',
-                opacity: doctor.available ? 1 : 0.5,
-                cursor: doctor.available ? 'pointer' : 'not-allowed'
+                opacity: doctor.available !== false ? 1 : 0.5,
+                cursor: doctor.available !== false ? 'pointer' : 'not-allowed'
               }}
             >
-              {doctor.available ? 'Book Appointment' : 'Currently Unavailable'}
+              {doctor.available !== false ? 'Book Appointment' : 'Currently Unavailable'}
             </button>
           </div>
         ))}
@@ -583,7 +550,7 @@ const PatientPortal = ({ user, onLogout }) => {
         <h2 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '0.5rem' }}>
           Profile Settings
         </h2>
-        <p style={{ color: '#666' }}>Manage your personal information</p>
+        <p style={{ color: '#666' }}>View your personal information</p>
       </div>
 
       <div className="card" style={{ padding: '1.5rem' }}>
@@ -600,10 +567,10 @@ const PatientPortal = ({ user, onLogout }) => {
             fontSize: '1.5rem',
             fontWeight: 'bold'
           }}>
-            JS
+            {user?.name?.charAt(0) || 'P'}
           </div>
           <div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>John Smith</h3>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>{user?.name || 'Patient Name'}</h3>
             <p style={{ color: '#666' }}>Patient ID: #PAT-2025-001</p>
             <span className="status-badge status-confirmed" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
               Active Patient
@@ -619,7 +586,7 @@ const PatientPortal = ({ user, onLogout }) => {
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
                 <Mail size={16} color="#666" />
-                <span style={{ color: '#1a1a1a' }}>john.smith@email.com</span>
+                <span style={{ color: '#1a1a1a' }}>{user?.email || 'patient@email.com'}</span>
               </div>
             </div>
             <div>
@@ -705,7 +672,7 @@ const PatientPortal = ({ user, onLogout }) => {
                 className="form-input"
               >
                 <option value="">Select a doctor</option>
-                {doctors.filter(doc => doc.available).map(doctor => (
+                {doctors.filter(doc => doc.available !== false).map(doctor => (
                   <option key={doctor.id} value={doctor.name}>
                     {doctor.name} - {doctor.specialty}
                   </option>
@@ -781,87 +748,6 @@ const PatientPortal = ({ user, onLogout }) => {
     )
   );
 
-  // Edit Appointment Modal
-  const EditAppointmentModal = () => (
-    editingAppointment && (
-      <div className="modal-overlay">
-        <div className="modal-content">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1a1a1a' }}>Edit Appointment</h3>
-            <button
-              onClick={() => setEditingAppointment(null)}
-              className="btn-icon"
-            >
-              <X size={20} />
-            </button>
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Date
-              </label>
-              <input
-                type="date"
-                value={editingAppointment.date}
-                onChange={(e) => setEditingAppointment({...editingAppointment, date: e.target.value})}
-                className="form-input"
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Time
-              </label>
-              <select
-                value={editingAppointment.time}
-                onChange={(e) => setEditingAppointment({...editingAppointment, time: e.target.value})}
-                className="form-input"
-              >
-                {['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '14:00', '14:30', '15:00', '15:30', '16:00'].map(time => (
-                  <option key={time} value={time}>{time}</option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Status
-              </label>
-              <select
-                value={editingAppointment.status}
-                onChange={(e) => setEditingAppointment({...editingAppointment, status: e.target.value})}
-                className="form-input"
-              >
-                <option value="pending">Pending</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-          </div>
-          
-          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-            <button
-              onClick={() => setEditingAppointment(null)}
-              className="btn btn-secondary"
-              style={{ flex: 1 }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleEditSave}
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-            >
-              Save Changes
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  );
-
   const Navigation = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const settingsRef = useRef(null);
@@ -890,7 +776,7 @@ const PatientPortal = ({ user, onLogout }) => {
 
     const handleProfileSettings = () => {
       console.log('Opening profile settings...');
-      alert('Profile settings clicked!');
+      setCurrentPage('profile');
       setIsSettingsOpen(false);
     };
 
@@ -946,7 +832,7 @@ const PatientPortal = ({ user, onLogout }) => {
               )}
             </div>
             
-            <div className="user-avatar">JS</div>
+            <div className="user-avatar">{user?.name?.charAt(0) || 'P'}</div>
           </div>
         </div>
       </nav>
@@ -984,7 +870,6 @@ const PatientPortal = ({ user, onLogout }) => {
       </main>
 
       <BookingFormModal />
-      <EditAppointmentModal />
     </div>
   );
 };
