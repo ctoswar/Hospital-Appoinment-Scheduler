@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { 
   Calendar, Clock, User, Stethoscope, Plus, Trash2, Heart,
   Activity, FileText, Bell, Settings, Search, Filter, ChevronRight,
-  MapPin, Phone, Mail, Star, X, Shield, LogOut
+  MapPin, Phone, Mail, Star, X, Shield, LogOut, Edit3, Save, Check
 } from 'lucide-react';
 import './styles/PatientPortal.css';
 import './styles/Navigation.css';
@@ -30,6 +30,26 @@ const PatientPortal = ({ user, onLogout }) => {
     type: ''
   });
   const [socket, setSocket] = useState(null);
+  const [notifications, setNotifications] = useState([
+    { id: 1, message: 'Appointment confirmed for tomorrow at 10:00 AM', time: '2 hours ago', read: false },
+    { id: 2, message: 'Lab results are now available', time: '1 day ago', read: false },
+    { id: 3, message: 'Prescription refill reminder', time: '2 days ago', read: true }
+  ]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  
+  // Profile editing state
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileData, setProfileData] = useState({
+    name: user?.name || 'Patient Name',
+    email: user?.email || 'patient@email.com',
+    phone: '+1 (555) 123-4567',
+    dateOfBirth: '1985-01-15',
+    emergencyContact: 'Jane Smith - +1 (555) 987-6543',
+    bloodType: 'O+',
+    insurance: 'BlueCross BlueShield'
+  });
+  const [originalProfileData, setOriginalProfileData] = useState({...profileData});
+  
   const navigate = useNavigate();
 
   // Handler functions
@@ -46,6 +66,65 @@ const PatientPortal = ({ user, onLogout }) => {
       });
     }
   };
+
+  // Profile editing handlers
+  const handleEditProfile = () => {
+    setOriginalProfileData({...profileData});
+    setIsEditingProfile(true);
+  };
+
+  const handleSaveProfile = async () => {
+    try {
+      // Here you would typically make an API call to update the profile
+      // For now, we'll just update the local state
+      console.log('Saving profile data:', profileData);
+      setIsEditingProfile(false);
+      
+      // Add a notification for successful save
+      const newNotification = {
+        id: Date.now(),
+        message: 'Profile updated successfully',
+        time: 'Just now',
+        read: false
+      };
+      setNotifications(prev => [newNotification, ...prev]);
+    } catch (error) {
+      console.error('Error saving profile:', error);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setProfileData({...originalProfileData});
+    setIsEditingProfile(false);
+  };
+
+  const handleProfileInputChange = (field, value) => {
+    setProfileData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Notification handlers
+  const markNotificationAsRead = (id) => {
+    setNotifications(prev => 
+      prev.map(notif => 
+        notif.id === id ? { ...notif, read: true } : notif
+      )
+    );
+  };
+
+  const markAllNotificationsAsRead = () => {
+    setNotifications(prev => 
+      prev.map(notif => ({ ...notif, read: true }))
+    );
+  };
+
+  const deleteNotification = (id) => {
+    setNotifications(prev => prev.filter(notif => notif.id !== id));
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   // Socket.IO and data initialization
   useEffect(() => {
@@ -546,11 +625,44 @@ const PatientPortal = ({ user, onLogout }) => {
 
   const ProfilePage = () => (
     <div className="content-container animate-fade-in">
-      <div style={{ marginBottom: '2rem' }}>
-        <h2 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-          Profile Settings
-        </h2>
-        <p style={{ color: '#666' }}>View your personal information</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+        <div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+            Profile Settings
+          </h2>
+          <p style={{ color: '#666' }}>Manage your personal information</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          {isEditingProfile ? (
+            <>
+              <button
+                onClick={handleCancelEdit}
+                className="btn btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <X size={16} />
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveProfile}
+                className="btn btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Save size={16} />
+                Save Changes
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleEditProfile}
+              className="btn btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Edit3 size={16} />
+              Edit Profile
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ padding: '1.5rem' }}>
@@ -567,10 +679,12 @@ const PatientPortal = ({ user, onLogout }) => {
             fontSize: '1.5rem',
             fontWeight: 'bold'
           }}>
-            {user?.name?.charAt(0) || 'P'}
+            {profileData.name?.charAt(0) || 'P'}
           </div>
           <div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>{user?.name || 'Patient Name'}</h3>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>
+              {profileData.name}
+            </h3>
             <p style={{ color: '#666' }}>Patient ID: #PAT-2025-001</p>
             <span className="status-badge status-confirmed" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
               Active Patient
@@ -582,39 +696,109 @@ const PatientPortal = ({ user, onLogout }) => {
           <div>
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                Full Name
+              </label>
+              {isEditingProfile ? (
+                <input
+                  type="text"
+                  value={profileData.name}
+                  onChange={(e) => handleProfileInputChange('name', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <User size={16} color="#666" />
+                  <span style={{ color: '#1a1a1a' }}>{profileData.name}</span>
+                </div>
+              )}
+            </div>
+            
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
                 Email
               </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <Mail size={16} color="#666" />
-                <span style={{ color: '#1a1a1a' }}>{user?.email || 'patient@email.com'}</span>
-              </div>
+              {isEditingProfile ? (
+                <input
+                  type="email"
+                  value={profileData.email}
+                  onChange={(e) => handleProfileInputChange('email', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <Mail size={16} color="#666" />
+                  <span style={{ color: '#1a1a1a' }}>{profileData.email}</span>
+                </div>
+              )}
             </div>
+            
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
                 Phone
               </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <Phone size={16} color="#666" />
-                <span style={{ color: '#1a1a1a' }}>+1 (555) 123-4567</span>
-              </div>
+              {isEditingProfile ? (
+                <input
+                  type="tel"
+                  value={profileData.phone}
+                  onChange={(e) => handleProfileInputChange('phone', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <Phone size={16} color="#666" />
+                  <span style={{ color: '#1a1a1a' }}>{profileData.phone}</span>
+                </div>
+              )}
             </div>
           </div>
+          
           <div>
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
                 Date of Birth
               </label>
-              <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <span style={{ color: '#1a1a1a' }}>January 15, 1985</span>
-              </div>
+              {isEditingProfile ? (
+                <input
+                  type="date"
+                  value={profileData.dateOfBirth}
+                  onChange={(e) => handleProfileInputChange('dateOfBirth', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <span style={{ color: '#1a1a1a' }}>
+                    {new Date(profileData.dateOfBirth).toLocaleDateString('en-US', { 
+                      year: 'numeric', 
+                      month: 'long', 
+                      day: 'numeric' 
+                    })}
+                  </span>
+                </div>
+              )}
             </div>
+            
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
                 Emergency Contact
               </label>
-              <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <span style={{ color: '#1a1a1a' }}>Jane Smith - +1 (555) 987-6543</span>
-              </div>
+              {isEditingProfile ? (
+                <input
+                  type="text"
+                  value={profileData.emergencyContact}
+                  onChange={(e) => handleProfileInputChange('emergencyContact', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                  placeholder="Name - Phone Number"
+                />
+              ) : (
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <span style={{ color: '#1a1a1a' }}>{profileData.emergencyContact}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -628,17 +812,46 @@ const PatientPortal = ({ user, onLogout }) => {
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
                 Blood Type
               </label>
-              <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <span style={{ color: '#1a1a1a' }}>O+</span>
-              </div>
+              {isEditingProfile ? (
+                <select
+                  value={profileData.bloodType}
+                  onChange={(e) => handleProfileInputChange('bloodType', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                >
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                </select>
+              ) : (
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <span style={{ color: '#1a1a1a' }}>{profileData.bloodType}</span>
+                </div>
+              )}
             </div>
+            
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Insurance
+                Insurance Provider
               </label>
-              <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                <span style={{ color: '#1a1a1a' }}>BlueCross BlueShield</span>
-              </div>
+              {isEditingProfile ? (
+                <input
+                  type="text"
+                  value={profileData.insurance}
+                  onChange={(e) => handleProfileInputChange('insurance', e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                  <span style={{ color: '#1a1a1a' }}>{profileData.insurance}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -748,15 +961,110 @@ const PatientPortal = ({ user, onLogout }) => {
     )
   );
 
+  // Notifications Modal
+  const NotificationsModal = () => (
+    showNotifications && (
+      <div className="modal-overlay">
+        <div className="modal-content" style={{ maxWidth: '500px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1a1a1a' }}>Notifications</h3>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {unreadCount > 0 && (
+                <button
+                  onClick={markAllNotificationsAsRead}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.875rem', padding: '0.5rem 0.75rem' }}
+                >
+                  Mark All Read
+                </button>
+              )}
+              <button
+                onClick={() => setShowNotifications(false)}
+                className="btn-icon"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          
+          <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+            {notifications.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#666' }}>
+                <Bell size={48} style={{ opacity: 0.3, margin: '0 auto 1rem' }} />
+                <p>No notifications yet</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {notifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    style={{
+                      padding: '1rem',
+                      backgroundColor: notification.read ? '#f8f9fa' : '#e3f2fd',
+                      borderRadius: '0.5rem',
+                      borderLeft: notification.read ? 'none' : '4px solid #2196f3',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => markNotificationAsRead(notification.id)}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ 
+                          color: '#1a1a1a', 
+                          fontWeight: notification.read ? 'normal' : '500',
+                          marginBottom: '0.25rem'
+                        }}>
+                          {notification.message}
+                        </p>
+                        <p style={{ fontSize: '0.875rem', color: '#666' }}>
+                          {notification.time}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                        {!notification.read && (
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            backgroundColor: '#2196f3',
+                            borderRadius: '50%',
+                            marginTop: '0.25rem'
+                          }} />
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteNotification(notification.id);
+                          }}
+                          className="btn-icon"
+                          style={{ padding: '0.25rem' }}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  );
+
   const Navigation = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const settingsRef = useRef(null);
+    const notificationsRef = useRef(null);
 
     // Close dropdown when clicking outside
     useEffect(() => {
       const handleClickOutside = (event) => {
         if (settingsRef.current && !settingsRef.current.contains(event.target)) {
           setIsSettingsOpen(false);
+        }
+        if (notificationsRef.current && !notificationsRef.current.contains(event.target)) {
+          setShowNotifications(false);
         }
       };
 
@@ -766,6 +1074,10 @@ const PatientPortal = ({ user, onLogout }) => {
 
     const handleSettingsToggle = () => {
       setIsSettingsOpen(!isSettingsOpen);
+    };
+
+    const handleNotificationsToggle = () => {
+      setShowNotifications(!showNotifications);
     };
 
     const handleLogout = () => {
@@ -799,10 +1111,37 @@ const PatientPortal = ({ user, onLogout }) => {
             </div>
           </div>
           <div className="navbar-actions">
-            <button className="navbar-btn">
-              <Bell size={20} />
-              <span className="notification-dot"></span>
-            </button>
+            <div className="notifications-container" ref={notificationsRef}>
+              <button 
+                className="navbar-btn" 
+                onClick={handleNotificationsToggle}
+                style={{ position: 'relative' }}
+              >
+                <Bell size={20} />
+                {unreadCount > 0 && (
+                  <span 
+                    className="notification-dot"
+                    style={{
+                      position: 'absolute',
+                      top: '0',
+                      right: '0',
+                      backgroundColor: '#ff4444',
+                      color: 'white',
+                      borderRadius: '50%',
+                      width: '18px',
+                      height: '18px',
+                      fontSize: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
             
             <div className="settings-container" ref={settingsRef}>
               <button 
@@ -870,6 +1209,7 @@ const PatientPortal = ({ user, onLogout }) => {
       </main>
 
       <BookingFormModal />
+      <NotificationsModal />
     </div>
   );
 };
