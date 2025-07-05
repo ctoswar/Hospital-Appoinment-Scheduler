@@ -31,7 +31,8 @@ if (!JWT_SECRET) {
 const corsOptions = {
   origin: 'http://localhost:3000',
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 
 // Security middleware
@@ -87,6 +88,21 @@ async function initializeDatabase() {
         role ENUM('patient', 'doctor', 'admin') DEFAULT 'patient',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS profiles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        phone VARCHAR(20),
+        date_of_birth DATE,
+        emergency_contact VARCHAR(255),
+        blood_type VARCHAR(10),
+        insurance_provider VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -220,6 +236,13 @@ app.post('/api/register', async (req, res, next) => {
       'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
       [name, email, hashedPassword, role]
     );
+
+    // Create empty profile for new user
+    await connection.execute(
+      'INSERT INTO profiles (user_id) VALUES (?)',
+      [result.insertId]
+    );
+
     connection.release();
 
     const token = jwt.sign(
@@ -296,6 +319,12 @@ app.post('/api/register/doctor', async (req, res, next) => {
     const [userResult] = await connection.execute(
       'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
       [name, email, hashedPassword, 'doctor']
+    );
+
+    // Create empty profile for new doctor
+    await connection.execute(
+      'INSERT INTO profiles (user_id) VALUES (?)',
+      [userResult.insertId]
     );
 
     const [doctorCheck] = await connection.execute(
@@ -380,7 +409,12 @@ app.get('/api/user/profile', authenticateToken, async (req, res, next) => {
   try {
     const connection = await pool.getConnection();
     const [users] = await connection.execute(
-      'SELECT id, name, email, role FROM users WHERE id = ?',
+      `SELECT u.id, u.name, u.email, u.role, 
+              p.phone, p.date_of_birth, p.emergency_contact, 
+              p.blood_type, p.insurance_provider
+       FROM users u
+       LEFT JOIN profiles p ON u.id = p.user_id
+       WHERE u.id = ?`,
       [req.user.userId]
     );
     connection.release();
@@ -390,6 +424,85 @@ app.get('/api/user/profile', authenticateToken, async (req, res, next) => {
     }
 
     res.json(users[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update user profile
+app.put('/api/user/profile', authenticateToken, async (req, res, next) => {
+  try {
+    const { name, email, phone, dateOfBirth, emergencyContact, bloodType, insurance } = req.body;
+    
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Name and email are required' });
+    }
+
+    const connection = await pool.getConnection();
+    
+    // Check if email is already taken by another user
+    const [existingUsers] = await connection.execute(
+      'SELECT id FROM users WHERE email = ? AND id != ?',
+      [email, req.user.userId]
+    );
+
+    if (existingUsers.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+
+    // Update user basic info
+    const [userResult] = await connection.execute(
+      'UPDATE users SET name = ?, email = ? WHERE id = ?',
+      [name, email, req.user.userId]
+    );
+
+    if (userResult.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Update or insert profile information
+    const [profileCheck] = await connection.execute(
+      'SELECT id FROM profiles WHERE user_id = ?',
+      [req.user.userId]
+    );
+
+    if (profileCheck.length > 0) {
+      // Update existing profile
+      await connection.execute(
+        `UPDATE profiles SET 
+         phone = ?, date_of_birth = ?, emergency_contact = ?, 
+         blood_type = ?, insurance_provider = ?
+         WHERE user_id = ?`,
+        [phone || null, dateOfBirth || null, emergencyContact || null, 
+         bloodType || null, insurance || null, req.user.userId]
+      );
+    } else {
+      // Insert new profile
+      await connection.execute(
+        `INSERT INTO profiles (user_id, phone, date_of_birth, emergency_contact, blood_type, insurance_provider) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [req.user.userId, phone || null, dateOfBirth || null, emergencyContact || null, 
+         bloodType || null, insurance || null]
+      );
+    }
+
+    connection.release();
+
+    res.json({ 
+      message: 'Profile updated successfully',
+      user: { 
+        id: req.user.userId, 
+        name, 
+        email, 
+        phone, 
+        dateOfBirth, 
+        emergencyContact, 
+        bloodType, 
+        insurance 
+      }
+    });
   } catch (error) {
     next(error);
   }
@@ -469,20 +582,24 @@ app.post('/api/appointments', authenticateToken, async (req, res, next) => {
   }
 });
 
-// Get user appointments
+
+// Get user appointments with better error handling
 app.get('/api/appointments', authenticateToken, async (req, res, next) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [appointments] = await connection.execute(
       `SELECT id, doctor_name, appointment_date, appointment_time, 
        appointment_type, status FROM appointments WHERE patient_id = ? 
        ORDER BY appointment_date DESC, appointment_time DESC`,
       [req.user.userId]
     );
-    connection.release();
     res.json(appointments);
   } catch (error) {
-    next(error);
+    console.error('Database error:', error);
+    res.status(500).json({ error: 'Failed to fetch appointments' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -509,8 +626,9 @@ app.get('/api/doctor/appointments', authenticateToken, async (req, res, next) =>
   }
 });
 
-// Update appointment status
+// Update appointment status with proper parameterization
 app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next) => {
+  let connection;
   try {
     const { status } = req.body;
     const appointmentId = req.params.id;
@@ -519,21 +637,23 @@ app.put('/api/appointments/:id/status', authenticateToken, async (req, res, next
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [result] = await connection.execute(
       'UPDATE appointments SET status = ? WHERE id = ? AND patient_id = ?',
       [status, appointmentId, req.user.userId]
     );
-    connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Appointment not found' });
+      return res.status(404).json({ error: 'Appointment not found or unauthorized' });
     }
 
     res.json({ message: 'Appointment status updated successfully' });
     broadcastAppointmentsChange();
   } catch (error) {
-    next(error);
+    console.error('Error updating appointment:', error);
+    res.status(500).json({ error: 'Failed to update appointment' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

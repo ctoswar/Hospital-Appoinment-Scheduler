@@ -13,7 +13,7 @@ import DoctorPortal from './DoctorPortal';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
-const PatientPortal = ({ user, onLogout }) => { 
+const PatientPortal = ({ user, onLogout, onUserUpdate }) => { 
   // State management
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [appointments, setAppointments] = useState([]);
@@ -49,23 +49,128 @@ const PatientPortal = ({ user, onLogout }) => {
     insurance: 'BlueCross BlueShield'
   });
   const [originalProfileData, setOriginalProfileData] = useState({...profileData});
+  const [profileLoading, setProfileLoading] = useState(false);
   
   const navigate = useNavigate();
 
-  // Handler functions
-  const handleBooking = () => {
-    const selectedDoctor = doctors.find(doc => doc.name === bookingData.doctorName);
-    if (selectedDoctor && bookingData.doctorName && bookingData.date && bookingData.time && bookingData.type) {
-      addAppointment({
-        doctor_id: selectedDoctor.id,
-        doctor_name: bookingData.doctorName,
-        appointment_date: bookingData.date,
-        appointment_time: bookingData.time,
-        appointment_type: bookingData.type,
-        patient_name: bookingData.patientName
-      });
+   useEffect(() => {
+    const validateToken = () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        onLogout();
+        return;
+      }
+      
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp * 1000 < Date.now()) {
+          onLogout();
+        }
+      } catch (error) {
+        onLogout();
+      }
+    };
+    validateToken();
+  }, [onLogout]);
+
+  // Fetch profile data from server
+ const fetchProfileData = async () => {
+  try {
+    setProfileLoading(true);
+    const token = localStorage.getItem('token');
+    
+    if (!token) {
+      throw new Error('No authentication token found');
     }
-  };
+
+    const response = await fetch(`${API_BASE_URL}/user/profile`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.status === 401) {
+      // Token is invalid or expired
+      onLogout();
+      throw new Error('Session expired. Please login again.');
+    }
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch profile data');
+    }
+
+    const data = await response.json();
+    const updatedProfileData = {
+      name: data.name || user?.name || 'Patient Name',
+      email: data.email || user?.email || 'patient@email.com',
+      phone: data.phone || '+1 (555) 123-4567',
+      dateOfBirth: data.date_of_birth || '1985-01-15',
+      emergencyContact: data.emergency_contact || 'Jane Smith - +1 (555) 987-6543',
+      bloodType: data.blood_type || 'O+',
+      insurance: data.insurance_provider || 'BlueCross BlueShield'
+    };
+    setProfileData(updatedProfileData);
+    setOriginalProfileData({...updatedProfileData});
+  } catch (error) {
+    console.error('Error fetching profile data:', error);
+    const errorNotification = {
+      id: Date.now(),
+      message: error.message || 'Failed to load profile data',
+      time: 'Just now',
+      read: false
+    };
+    setNotifications(prev => [errorNotification, ...prev]);
+    
+    if (error.message.includes('Session expired')) {
+      onLogout();
+    }
+  } finally {
+    setProfileLoading(false);
+  }
+};
+
+  // Handler functions
+ const handleBooking = async () => {
+  try {
+    if (!bookingData.doctorName || !bookingData.date || !bookingData.time || !bookingData.type) {
+      throw new Error('Please fill all required fields');
+    }
+
+    const selectedDoctor = doctors.find(doc => doc.name === bookingData.doctorName);
+    if (!selectedDoctor) {
+      throw new Error('Selected doctor not found');
+    }
+
+    await addAppointment({
+      doctor_id: selectedDoctor.id,
+      doctor_name: bookingData.doctorName,
+      appointment_date: bookingData.date,
+      appointment_time: bookingData.time,
+      appointment_type: bookingData.type,
+      patient_name: bookingData.patientName
+    });
+
+    // Add success notification
+    const successNotification = {
+      id: Date.now(),
+      message: 'Appointment booked successfully',
+      time: 'Just now',
+      read: false
+    };
+    setNotifications(prev => [successNotification, ...prev]);
+  } catch (error) {
+    console.error('Booking error:', error);
+    // Add error notification
+    const errorNotification = {
+      id: Date.now(),
+      message: error.message || 'Failed to book appointment',
+      time: 'Just now',
+      read: false
+    };
+    setNotifications(prev => [errorNotification, ...prev]);
+  }
+};
 
   // Profile editing handlers
   const handleEditProfile = () => {
@@ -74,24 +179,79 @@ const PatientPortal = ({ user, onLogout }) => {
   };
 
   const handleSaveProfile = async () => {
-    try {
-      // Here you would typically make an API call to update the profile
-      // For now, we'll just update the local state
-      console.log('Saving profile data:', profileData);
-      setIsEditingProfile(false);
-      
-      // Add a notification for successful save
-      const newNotification = {
-        id: Date.now(),
-        message: 'Profile updated successfully',
-        time: 'Just now',
-        read: false
-      };
-      setNotifications(prev => [newNotification, ...prev]);
-    } catch (error) {
-      console.error('Error saving profile:', error);
+  try {
+    setProfileLoading(true);
+    const token = localStorage.getItem('token');
+    
+    // Prepare the data to match the backend expectations
+    const profileUpdateData = {
+      name: profileData.name,
+      email: profileData.email,
+      phone: profileData.phone,
+      dateOfBirth: profileData.dateOfBirth,
+      emergencyContact: profileData.emergencyContact,
+      bloodType: profileData.bloodType,
+      insurance: profileData.insurance
+    };
+
+    const response = await fetch(`${API_BASE_URL}/user/profile`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include',
+      body: JSON.stringify(profileUpdateData)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to save profile');
     }
-  };
+
+    const data = await response.json();
+    console.log('Profile saved:', data);
+    setIsEditingProfile(false);
+    
+    // Update the original profile data to the new saved data
+    setOriginalProfileData({...profileData});
+    
+    // Add a notification for successful save
+    const newNotification = {
+      id: Date.now(),
+      message: 'Profile updated successfully',
+      time: 'Just now',
+      read: false
+    };
+    setNotifications(prev => [newNotification, ...prev]);
+    
+    // Update user object in localStorage and notify parent component
+    const updatedUser = { 
+      ...user, 
+      name: profileData.name, 
+      email: profileData.email 
+    };
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+    
+    // Call parent's user update function if provided
+    if (onUserUpdate) {
+      onUserUpdate(updatedUser);
+    }
+    
+  } catch (error) {
+    console.error('Error saving profile:', error);
+    // Add error notification with more specific message
+    const errorNotification = {
+      id: Date.now(),
+      message: error.message || 'Failed to update profile. Please try again.',
+      time: 'Just now',
+      read: false
+    };
+    setNotifications(prev => [errorNotification, ...prev]);
+  } finally {
+    setProfileLoading(false);
+  }
+};
 
   const handleCancelEdit = () => {
     setProfileData({...originalProfileData});
@@ -159,14 +319,18 @@ const PatientPortal = ({ user, onLogout }) => {
       }
     };
 
+    // Fetch initial data including profile
     fetchInitialData();
+    fetchProfileData();
 
     // Socket.IO setup
-    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
-      withCredentials: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
+   const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+  auth: {
+    token: localStorage.getItem('token')
+  },
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
     setSocket(newSocket);
 
@@ -185,45 +349,55 @@ const PatientPortal = ({ user, onLogout }) => {
     };
   }, []);
 
+  // Update booking data when user changes
+  useEffect(() => {
+    setBookingData(prev => ({
+      ...prev,
+      patientName: user?.name || 'Patient'
+    }));
+  }, [user]);
+
   // Appointment CRUD operations
   const addAppointment = async (appointmentData) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/appointments`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          doctor_id: appointmentData.doctor_id,
-          doctor_name: appointmentData.doctor_name,
-          appointment_date: appointmentData.appointment_date,
-          appointment_time: appointmentData.appointment_time,
-          appointment_type: appointmentData.appointment_type,
-          patient_id: user.id,
-          patient_name: appointmentData.patient_name
-        })
-      });
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/appointments`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        doctor_id: appointmentData.doctor_id,
+        doctor_name: appointmentData.doctor_name,
+        appointment_date: appointmentData.appointment_date,
+        appointment_time: appointmentData.appointment_time,
+        appointment_type: appointmentData.appointment_type,
+        patient_id: user.id,
+        patient_name: appointmentData.patient_name
+      })
+    });
 
-      if (response.ok) {
-        setBookingData({ 
-          patientName: user?.name || 'Patient',
-          doctorName: '', 
-          date: '', 
-          time: '', 
-          type: '' 
-        });
-        setShowBookingForm(false);
-      } else {
-        const errorData = await response.json();
-        console.error('Error response:', errorData);
+    if (response.ok) {
+      setBookingData({ 
+        patientName: user?.name || 'Patient',
+        doctorName: '', 
+        date: '', 
+        time: '', 
+        type: '' 
+      });
+      setShowBookingForm(false);
+    } else {
+      const errorData = await response.json();
+      console.error('Error response:', errorData);
+      if (response.status === 401) {
+        onLogout();
       }
-    } catch (error) {
-      console.error('Error adding appointment:', error);
     }
-  };
+  } catch (error) {
+    console.error('Error adding appointment:', error);
+  }
+};
 
   const deleteAppointment = async (id) => {
     try {
@@ -286,7 +460,7 @@ const PatientPortal = ({ user, onLogout }) => {
       <div className="card gradient-card" style={{ marginBottom: '2rem', padding: '2rem' }}>
         <div style={{ position: 'relative', zIndex: 2 }}>
           <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '1rem', color: 'white' }}>
-            Welcome back, {user?.name}! 👋
+            Welcome back, {profileData.name}! 👋
           </h2>
           <p style={{ color: 'rgba(255, 255, 255, 0.9)', marginBottom: '1.5rem' }}>
             Your health journey continues here. Stay on top of your appointments and wellness.
@@ -639,6 +813,7 @@ const PatientPortal = ({ user, onLogout }) => {
                 onClick={handleCancelEdit}
                 className="btn btn-secondary"
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                disabled={profileLoading}
               >
                 <X size={16} />
                 Cancel
@@ -647,9 +822,19 @@ const PatientPortal = ({ user, onLogout }) => {
                 onClick={handleSaveProfile}
                 className="btn btn-primary"
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                disabled={profileLoading}
               >
-                <Save size={16} />
-                Save Changes
+                {profileLoading ? (
+                  <>
+                    <div style={{ width: '16px', height: '16px', border: '2px solid transparent', borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={16} />
+                    Save Changes
+                  </>
+                )}
               </button>
             </>
           ) : (
@@ -657,6 +842,7 @@ const PatientPortal = ({ user, onLogout }) => {
               onClick={handleEditProfile}
               className="btn btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              disabled={profileLoading}
             >
               <Edit3 size={16} />
               Edit Profile
@@ -665,197 +851,213 @@ const PatientPortal = ({ user, onLogout }) => {
         </div>
       </div>
 
-      <div className="card" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '2rem' }}>
-          <div style={{ 
-            width: '6rem', 
-            height: '6rem', 
-            background: 'var(--primary-gradient)', 
-            borderRadius: '1.5rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'white',
-            fontSize: '1.5rem',
-            fontWeight: 'bold'
-          }}>
-            {profileData.name?.charAt(0) || 'P'}
-          </div>
-          <div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>
-              {profileData.name}
-            </h3>
-            <p style={{ color: '#666' }}>Patient ID: #PAT-2025-001</p>
-            <span className="status-badge status-confirmed" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
-              Active Patient
-            </span>
+      {profileLoading && !isEditingProfile ? (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#666' }}>
+            <div style={{ width: '20px', height: '20px', border: '2px solid #e5e7eb', borderTop: '2px solid #666', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            Loading profile...
           </div>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
-          <div>
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Full Name
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="text"
-                  value={profileData.name}
-                  onChange={(e) => handleProfileInputChange('name', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <User size={16} color="#666" />
-                  <span style={{ color: '#1a1a1a' }}>{profileData.name}</span>
-                </div>
-              )}
+      ) : (
+        <div className="card" style={{ padding: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div style={{ 
+              width: '6rem', 
+              height: '6rem', 
+              background: 'var(--primary-gradient)', 
+              borderRadius: '1.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'white',
+              fontSize: '1.5rem',
+              fontWeight: 'bold'
+            }}>
+              {profileData.name?.charAt(0) || 'P'}
             </div>
-            
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Email
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="email"
-                  value={profileData.email}
-                  onChange={(e) => handleProfileInputChange('email', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <Mail size={16} color="#666" />
-                  <span style={{ color: '#1a1a1a' }}>{profileData.email}</span>
-                </div>
-              )}
-            </div>
-            
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Phone
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="tel"
-                  value={profileData.phone}
-                  onChange={(e) => handleProfileInputChange('phone', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <Phone size={16} color="#666" />
-                  <span style={{ color: '#1a1a1a' }}>{profileData.phone}</span>
-                </div>
-              )}
+              <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1a1a1a' }}>
+                {profileData.name}
+              </h3>
+              <p style={{ color: '#666' }}>Patient ID: #PAT-2025-001</p>
+              <span className="status-badge status-confirmed" style={{ marginTop: '0.5rem', display: 'inline-block' }}>
+                Active Patient
+              </span>
             </div>
           </div>
-          
-          <div>
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Date of Birth
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="date"
-                  value={profileData.dateOfBirth}
-                  onChange={(e) => handleProfileInputChange('dateOfBirth', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <span style={{ color: '#1a1a1a' }}>
-                    {new Date(profileData.dateOfBirth).toLocaleDateString('en-US', { 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric' 
-                    })}
-                  </span>
-                </div>
-              )}
-            </div>
-            
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Emergency Contact
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="text"
-                  value={profileData.emergencyContact}
-                  onChange={(e) => handleProfileInputChange('emergencyContact', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                  placeholder="Name - Phone Number"
-                />
-              ) : (
-                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <span style={{ color: '#1a1a1a' }}>{profileData.emergencyContact}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
 
-        <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
-          <h4 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1a1a1a', marginBottom: '1rem' }}>
-            Health Information
-          </h4>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Blood Type
-              </label>
-              {isEditingProfile ? (
-                <select
-                  value={profileData.bloodType}
-                  onChange={(e) => handleProfileInputChange('bloodType', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                >
-                  <option value="A+">A+</option>
-                  <option value="A-">A-</option>
-                  <option value="B+">B+</option>
-                  <option value="B-">B-</option>
-                  <option value="AB+">AB+</option>
-                  <option value="AB-">AB-</option>
-                  <option value="O+">O+</option>
-                  <option value="O-">O-</option>
-                </select>
-              ) : (
-                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <span style={{ color: '#1a1a1a' }}>{profileData.bloodType}</span>
-                </div>
-              )}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Full Name
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="text"
+                    value={profileData.name}
+                    onChange={(e) => handleProfileInputChange('name', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <User size={16} color="#666" />
+                    <span style={{ color: '#1a1a1a' }}>{profileData.name}</span>
+                  </div>
+                )}
+              </div>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Email
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="email"
+                    value={profileData.email}
+                    onChange={(e) => handleProfileInputChange('email', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <Mail size={16} color="#666" />
+                    <span style={{ color: '#1a1a1a' }}>{profileData.email}</span>
+                  </div>
+                )}
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Phone
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="tel"
+                    value={profileData.phone}
+                    onChange={(e) => handleProfileInputChange('phone', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <Phone size={16} color="#666" />
+                    <span style={{ color: '#1a1a1a' }}>{profileData.phone}</span>
+                  </div>
+                )}
+              </div>
             </div>
             
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
-                Insurance Provider
-              </label>
-              {isEditingProfile ? (
-                <input
-                  type="text"
-                  value={profileData.insurance}
-                  onChange={(e) => handleProfileInputChange('insurance', e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
-                  <span style={{ color: '#1a1a1a' }}>{profileData.insurance}</span>
-                </div>
-              )}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Date of Birth
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="date"
+                    value={profileData.dateOfBirth}
+                    onChange={(e) => handleProfileInputChange('dateOfBirth', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <span style={{ color: '#1a1a1a' }}>
+                      {new Date(profileData.dateOfBirth).toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      })}
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Emergency Contact
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="text"
+                    value={profileData.emergencyContact}
+                    onChange={(e) => handleProfileInputChange('emergencyContact', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    placeholder="Name - Phone Number"
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <span style={{ color: '#1a1a1a' }}>{profileData.emergencyContact}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
+            <h4 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1a1a1a', marginBottom: '1rem' }}>
+              Health Information
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Blood Type
+                </label>
+                {isEditingProfile ? (
+                  <select
+                    value={profileData.bloodType}
+                    onChange={(e) => handleProfileInputChange('bloodType', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  >
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                  </select>
+                ) : (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <span style={{ color: '#1a1a1a' }}>{profileData.bloodType}</span>
+                  </div>
+                )}
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: '#1a1a1a', marginBottom: '0.5rem' }}>
+                  Insurance Provider
+                </label>
+                {isEditingProfile ? (
+                  <input
+                    type="text"
+                    value={profileData.insurance}
+                    onChange={(e) => handleProfileInputChange('insurance', e.target.value)}
+                    className="form-input"
+                    style={{ width: '100%' }}
+                    disabled={profileLoading}
+                  />
+                ) : (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8f9fa', borderRadius: '0.5rem' }}>
+                    <span style={{ color: '#1a1a1a' }}>{profileData.insurance}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -1171,7 +1373,7 @@ const PatientPortal = ({ user, onLogout }) => {
               )}
             </div>
             
-            <div className="user-avatar">{user?.name?.charAt(0) || 'P'}</div>
+            <div className="user-avatar">{profileData.name?.charAt(0) || 'P'}</div>
           </div>
         </div>
       </nav>
@@ -1242,9 +1444,13 @@ const MainApp = () => {
     setToken(null);
   };
 
+  const handleUserUpdate = (updatedUser) => {
+    setUser(updatedUser);
+  };
+
   if (!user) return <Homepage onLogin={handleLogin} />;
   if (user.role === 'doctor') return <DoctorPortal user={user} onLogout={handleLogout} />;
-  return <PatientPortal user={user} onLogout={handleLogout} />;
+  return <PatientPortal user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
 };
 
 export default MainApp;
