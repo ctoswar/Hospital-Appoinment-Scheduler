@@ -161,6 +161,32 @@ async function initializeDatabase() {
       }
     }
 
+    // Check if admin user exists, if not create one
+    const [adminUsers] = await connection.execute(
+      'SELECT COUNT(*) as count FROM users WHERE role = "admin"'
+    );
+
+    if (adminUsers[0].count === 0) {
+      console.log('Creating default admin account...');
+      const adminPassword = await bcrypt.hash('admin123', 10); // Change this to a secure password
+      
+      const [adminResult] = await connection.execute(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+        ['Administrator', 'admin@medschedule.com', adminPassword, 'admin']
+      );
+
+      // Create empty profile for admin
+      await connection.execute(
+        'INSERT INTO profiles (user_id) VALUES (?)',
+        [adminResult.insertId]
+      );
+
+      console.log('Default admin account created:');
+      console.log('Email: admin@medschedule.com');
+      console.log('Password: admin123');
+      console.log('Please change the password after first login!');
+    }
+
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Database initialization error:', error);
@@ -582,7 +608,6 @@ app.post('/api/appointments', authenticateToken, async (req, res, next) => {
   }
 });
 
-
 // Get user appointments with better error handling
 app.get('/api/appointments', authenticateToken, async (req, res, next) => {
   let connection;
@@ -723,6 +748,201 @@ app.get('/api/admin/appointments', authenticateToken, async (req, res, next) => 
     );
     connection.release();
     res.json(appointments);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin route to manage doctors
+app.get('/api/admin/doctors', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const connection = await pool.getConnection();
+    const [doctors] = await connection.execute(
+      'SELECT * FROM doctors ORDER BY created_at DESC'
+    );
+    connection.release();
+    res.json(doctors);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin route to add doctor
+app.post('/api/admin/doctors', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { doctorId, name, specialty, available } = req.body;
+    
+    if (!doctorId || !name || !specialty) {
+      return res.status(400).json({ error: 'Doctor ID, name, and specialty are required' });
+    }
+
+    const connection = await pool.getConnection();
+    
+    // Check if doctor ID already exists
+    const [existing] = await connection.execute(
+      'SELECT id FROM doctors WHERE doctor_id = ?',
+      [doctorId]
+    );
+
+    if (existing.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Doctor ID already exists' });
+    }
+
+    const [result] = await connection.execute(
+      'INSERT INTO doctors (user_id, doctor_id, name, specialty, available) VALUES (?, ?, ?, ?, ?)',
+      [null, doctorId, name, specialty, available !== undefined ? available : true]
+    );
+    
+    connection.release();
+    res.status(201).json({ 
+      message: 'Doctor added successfully', 
+      doctorId: result.insertId 
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin route to update doctor
+app.put('/api/admin/doctors/:id', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { doctorId, name, specialty, available } = req.body;
+    const id = req.params.id;
+    
+    const connection = await pool.getConnection();
+    
+    // Check if doctor ID is taken by another doctor
+    const [existing] = await connection.execute(
+      'SELECT id FROM doctors WHERE doctor_id = ? AND id != ?',
+      [doctorId, id]
+    );
+
+    if (existing.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Doctor ID already exists' });
+    }
+
+    const [result] = await connection.execute(
+      'UPDATE doctors SET doctor_id = ?, name = ?, specialty = ?, available = ? WHERE id = ?',
+      [doctorId, name, specialty, available, id]
+    );
+    
+    connection.release();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Doctor not found' });
+    }
+
+    res.json({ message: 'Doctor updated successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin route to delete doctor
+app.delete('/api/admin/doctors/:id', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const id = req.params.id;
+    const connection = await pool.getConnection();
+    
+    const [result] = await connection.execute(
+      'DELETE FROM doctors WHERE id = ?',
+      [id]
+    );
+    
+    connection.release();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Doctor not found' });
+    }
+
+    res.json({ message: 'Doctor deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin route to update patient
+app.put('/api/admin/patients/:id', authenticateToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { name, email, phone, dateOfBirth, emergencyContact, bloodType, insurance } = req.body;
+    const userId = req.params.id;
+    
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Name and email are required' });
+    }
+
+    const connection = await pool.getConnection();
+    
+    // Check if email is already taken by another user
+    const [existingUsers] = await connection.execute(
+      'SELECT id FROM users WHERE email = ? AND id != ?',
+      [email, userId]
+    );
+
+    if (existingUsers.length > 0) {
+      connection.release();
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+
+    // Update user basic info
+    const [userResult] = await connection.execute(
+      'UPDATE users SET name = ?, email = ? WHERE id = ? AND role = "patient"',
+      [name, email, userId]
+    );
+
+    if (userResult.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Update or insert profile information
+    const [profileCheck] = await connection.execute(
+      'SELECT id FROM profiles WHERE user_id = ?',
+      [userId]
+    );
+
+    if (profileCheck.length > 0) {
+      await connection.execute(
+        `UPDATE profiles SET 
+         phone = ?, date_of_birth = ?, emergency_contact = ?, 
+         blood_type = ?, insurance_provider = ?
+         WHERE user_id = ?`,
+        [phone || null, dateOfBirth || null, emergencyContact || null, 
+         bloodType || null, insurance || null, userId]
+      );
+    } else {
+      await connection.execute(
+        `INSERT INTO profiles (user_id, phone, date_of_birth, emergency_contact, blood_type, insurance_provider) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, phone || null, dateOfBirth || null, emergencyContact || null, 
+         bloodType || null, insurance || null]
+      );
+    }
+
+    connection.release();
+    res.json({ message: 'Patient updated successfully' });
   } catch (error) {
     next(error);
   }

@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import './styles/index.css';
 import reportWebVitals from './reportWebVitals';
 import Homepage from './Homepage';
-import PatientPortal from './App'; // Changed from App to PatientPortal to match your component
+import PatientPortal from './App';
+import AdminPortal from './AdminPortal'; // Import your AdminPortal
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 
 const AppWrapper = () => {
@@ -12,7 +13,6 @@ const AppWrapper = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Check for existing authentication on app load
   useEffect(() => {
     const checkAuth = () => {
       try {
@@ -40,7 +40,7 @@ const AppWrapper = () => {
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
     setIsAuthenticated(true);
-    navigate('/dashboard'); // Redirect after login
+    navigate('/dashboard');
   };
 
   const handleLogout = () => {
@@ -51,7 +51,6 @@ const AppWrapper = () => {
     navigate('/');
   };
 
-  // Show loading while checking authentication
   if (loading) {
     return (
       <div style={{
@@ -78,7 +77,11 @@ const AppWrapper = () => {
   return (
     <>
       {isAuthenticated ? (
-        <PatientPortal onLogout={handleLogout} user={user} />
+        user?.role === 'admin' ? (
+          <AdminPortal onLogout={handleLogout} user={user} />
+        ) : (
+          <PatientPortal onLogout={handleLogout} user={user} />
+        )
       ) : (
         <Homepage onLogin={handleLogin} />
       )}
@@ -93,7 +96,6 @@ root.render(
       <Routes>
         <Route path="/" element={<AppWrapper />} />
         <Route path="/dashboard" element={<AppWrapper />} />
-        {/* Add other routes as needed */}
       </Routes>
     </BrowserRouter>
   </React.StrictMode>
